@@ -1,0 +1,12 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+tfplan
+*.tfplan
+
+# Credentials — never commit these
+*.pem
+*.key
+terraform.tfvars.local
