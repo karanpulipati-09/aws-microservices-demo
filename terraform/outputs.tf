@@ -22,3 +22,13 @@ output "ec2_private_ip" {
   description = "EC2 private IP (not directly reachable — traffic goes through ALB)"
   value       = module.ec2.private_ip
 }
+
+output "db_endpoint" {
+  description = "RDS endpoint — EC2 connects to this"
+  value       = module.rds.db_endpoint
+}
+
+output "db_secret_name" {
+  description = "Secrets Manager secret name — retrieve password from here"
+  value       = aws_secretsmanager_secret.db.name
+}

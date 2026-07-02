@@ -94,3 +94,31 @@ module "alb" {
   ec2_security_group_id = aws_security_group.ec2.id
   alb_security_group_id = aws_security_group.alb.id
 }
+
+# Generate a random password for RDS
+resource "random_password" "db" {
+  length  = 16
+  special = false
+}
+
+# Create the secret container in Secrets Manager
+resource "aws_secretsmanager_secret" "db" {
+  name = "${var.project_name}-${var.environment}-db-password"
+}
+
+# Store the generated password inside the secret
+resource "aws_secretsmanager_secret_version" "db" {
+  secret_id     = aws_secretsmanager_secret.db.id
+  secret_string = random_password.db.result
+}
+
+module "rds" {
+  source = "./modules/rds"
+
+  project_name          = var.project_name
+  environment           = var.environment
+  vpc_id                = module.vpc.vpc_id
+  db_subnet_ids         = module.vpc.database_subnet_ids
+  ec2_security_group_id = aws_security_group.ec2.id
+  db_password           = random_password.db.result
+}
