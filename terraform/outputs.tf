@@ -32,3 +32,8 @@ output "db_secret_name" {
   description = "Secrets Manager secret name — retrieve password from here"
   value       = aws_secretsmanager_secret.db.name
 }
+
+output "github_actions_role_arn" {
+  description = "IAM role ARN — paste this into the GHA workflow files"
+  value       = aws_iam_role.github_actions.arn
+}
