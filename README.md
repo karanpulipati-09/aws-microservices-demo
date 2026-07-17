@@ -81,14 +81,18 @@ Open `alb_dns_name` in your browser to see the nginx page.
 terraform destroy
 ```
 
-## CI/CD (coming soon)
+## CI/CD
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `terraform-plan.yml` | Pull Request | Runs plan, posts result as PR comment |
-| `terraform-apply.yml` | Merge to main | Applies the saved plan |
+| `terraform-plan.yml` | Pull Request to main | Runs terraform plan, posts result as PR comment |
+| `terraform-apply.yml` | Merge to main | Runs terraform apply automatically |
 
-Both will use **OIDC authentication** — no AWS access keys stored in GitHub.
+**Authentication**: OIDC — no AWS access keys stored in GitHub. GitHub proves its identity to AWS and assumes an IAM role with temporary credentials.
+
+**Provider caching**: `.terraform` directory cached via `actions/cache@v4` keyed on `.terraform.lock.hcl` — skips provider download on subsequent runs (~20-30s saved per run).
+
+**Terraform version**: 1.15.x
 
 ## Resources created
 
