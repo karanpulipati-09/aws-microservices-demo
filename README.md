@@ -1,4 +1,4 @@
-# aws-microservices-demo
+## aws-microservices-demo
 
 Multi-tier AWS infrastructure built with Terraform. Demonstrates production-grade networking, compute, load balancing, database, and CI/CD patterns.
 
