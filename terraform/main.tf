@@ -103,7 +103,8 @@ resource "random_password" "db" {
 
 # Create the secret container in Secrets Manager
 resource "aws_secretsmanager_secret" "db" {
-  name = "${var.project_name}-${var.environment}-db-password"
+  name                    = "${var.project_name}-${var.environment}-db-password"
+  recovery_window_in_days = 0
 }
 
 # Store the generated password inside the secret
