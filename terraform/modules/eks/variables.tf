@@ -13,3 +13,8 @@ variable "vpc_id" {
 variable "private_subnet_ids" {
   type = list(string)
 }
+
+variable "admin_iam_arn" {
+  type        = string
+  description = "IAM user/role ARN to grant EKS cluster admin access"
+}

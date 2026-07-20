@@ -131,6 +131,7 @@ module "eks" {
   environment        = var.environment
   vpc_id             = module.vpc.vpc_id
   private_subnet_ids = module.vpc.private_subnet_ids
+  admin_iam_arn      = "arn:aws:iam::259851212818:user/terraform-learner"
 }
 
 # OIDC — one-time setup, not a module
