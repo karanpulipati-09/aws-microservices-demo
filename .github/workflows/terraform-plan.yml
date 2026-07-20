@@ -40,7 +40,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform
-        run: terraform init
+        run: terraform init -migrate-state
 
       - name: Terraform Plan
         working-directory: terraform
