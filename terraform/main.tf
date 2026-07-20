@@ -124,6 +124,15 @@ module "rds" {
   db_password           = random_password.db.result
 }
 
+module "eks" {
+  source = "./modules/eks"
+
+  project_name       = var.project_name
+  environment        = var.environment
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
+}
+
 # OIDC — one-time setup, not a module
 # Tells AWS to trust GitHub Actions as an identity provider
 
