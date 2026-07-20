@@ -16,7 +16,7 @@ terraform {
     bucket         = "karan-tf-state-259851212818"
     key            = "aws-microservices-demo/dev/terraform.tfstate"
     region         = "us-east-1"
-    use_lockfile   = true
+    dynamodb_table = "terraform-state-lock"
     encrypt        = true
   }
 }
