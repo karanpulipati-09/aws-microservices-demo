@@ -37,3 +37,13 @@ output "github_actions_role_arn" {
   description = "IAM role ARN — paste this into the GHA workflow files"
   value       = aws_iam_role.github_actions.arn
 }
+
+output "eks_cluster_name" {
+  description = "EKS cluster name — use with aws eks update-kubeconfig"
+  value       = module.eks.cluster_name
+}
+
+output "eks_cluster_endpoint" {
+  description = "EKS API server endpoint"
+  value       = module.eks.cluster_endpoint
+}
