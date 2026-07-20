@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.10.0"
+  required_version = ">= 1.15.0"
 
   required_providers {
     aws = {
@@ -16,7 +16,7 @@ terraform {
     bucket         = "karan-tf-state-259851212818"
     key            = "aws-microservices-demo/dev/terraform.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "terraform-state-lock"
+    use_lockfile   = true
     encrypt        = true
   }
 }
