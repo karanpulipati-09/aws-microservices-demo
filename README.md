@@ -1,6 +1,6 @@
 ## aws-microservices-demo
 
-Multi-tier AWS infrastructure built with Terraform. Demonstrates production-grade networking, compute, load balancing, database, and CI/CD patterns.
+Multi-tier AWS infrastructure built with Terraform. Demonstrates production-grade networking, compute, load balancing, database, EKS, and CI/CD patterns.
 
 ## Architecture
 
@@ -9,12 +9,15 @@ Internet
     ↓ HTTP port 80
 ALB  (public subnets — us-east-1a, us-east-1b)
     ↓ HTTP port 80 (ALB SG → EC2 SG only)
-EC2  (private subnet — us-east-1a)  ← nginx
+EC2  (private subnet)  ← nginx
     ↓ MySQL port 3306 (EC2 SG → RDS SG only)
-RDS  (DB subnet — us-east-1a)  ← MySQL 8.0
+RDS  (DB subnet)  ← MySQL 8.0
 
-EC2 outbound:
-EC2 → NAT Gateway → Internet (package installs)
+EKS Cluster (private subnets — 2x t3.micro nodes)
+    └── nginx Deployment (2 replicas) + LoadBalancer Service
+
+EC2/EKS outbound:
+EC2/nodes → NAT Gateway → Internet (package installs, image pulls)
 
 Password flow:
 random_password → Secrets Manager → RDS (never hardcoded)
@@ -26,14 +29,13 @@ random_password → Secrets Manager → RDS (never hardcoded)
 |---|---|
 | VPC | Isolated private network — 3 subnet tiers across 2 AZs |
 | Internet Gateway | Public internet access for ALB |
-| NAT Gateway | Outbound-only internet for private EC2 |
-| ALB SG | Port 80 from internet, egress to EC2 SG only |
-| EC2 SG | Port 80 from ALB SG only, all outbound |
-| RDS SG | Port 3306 from EC2 SG only |
+| NAT Gateway | Outbound-only internet for private EC2 + EKS nodes |
 | ALB | Internet-facing load balancer in public subnets |
 | EC2 | App server running nginx in private subnet |
 | RDS MySQL 8.0 | Database in isolated DB subnet, not publicly accessible |
 | Secrets Manager | Auto-generated DB password stored securely |
+| EKS Cluster | Kubernetes cluster in private subnets (v1.30) |
+| EKS Node Group | 2x t3.micro worker nodes with Auto Scaling (min 1, max 3) |
 | S3 + DynamoDB | Terraform remote state + state locking |
 
 ## Security
@@ -44,7 +46,8 @@ random_password → Secrets Manager → RDS (never hardcoded)
 - DB subnet has **no internet route** — RDS completely isolated
 - DB password **auto-generated** by Terraform, stored in Secrets Manager
 - `publicly_accessible = false` on RDS — double protection
-- No SSH keys — EC2 access via AWS Systems Manager (SSM) if needed
+- EKS nodes in **private subnets** — only reachable via kubectl through IAM
+- No SSH keys — access via AWS Systems Manager (SSM) if needed
 
 ## Modules
 
@@ -54,43 +57,39 @@ random_password → Secrets Manager → RDS (never hardcoded)
 | `modules/ec2` | EC2 instance with nginx, AMI auto-detected |
 | `modules/alb` | ALB, target group, listener, target group attachment |
 | `modules/rds` | RDS MySQL, DB subnet group, RDS security group |
+| `modules/eks` | EKS cluster, node group, IAM roles for control plane + nodes |
 
-## Usage
+## Kubernetes
 
+Manifests in `k8s/`:
+
+| File | Resource | Details |
+|---|---|---|
+| `deployment.yaml` | Deployment | 2 replicas, nginx:latest, port 80 |
+| `service.yaml` | Service (LoadBalancer) | Provisions an AWS ELB, exposes port 80 |
+
+After EKS apply:
 ```bash
-cd terraform
-terraform init
-terraform plan
-terraform apply
+aws eks update-kubeconfig --region us-east-1 --name demo-dev-eks
+kubectl apply -f k8s/
+kubectl get service nginx  # get LoadBalancer URL
 ```
 
-After apply, the terminal prints:
-
-```
-alb_dns_name   = "demo-dev-alb-XXXX.us-east-1.elb.amazonaws.com"
-db_endpoint    = "demo-dev-mysql.XXXX.us-east-1.rds.amazonaws.com:3306"
-db_secret_name = "demo-dev-db-password"
-ec2_private_ip = "10.0.10.X"
-```
-
-Open `alb_dns_name` in your browser to see the nginx page.
-
-**Always destroy after use — NAT Gateway + RDS cost ~$2/day.**
-
-```bash
-terraform destroy
-```
+> **Note**: Delete kubernetes Services before destroying infra — `kubectl delete -f k8s/` — otherwise the ELB created by the Service will block VPC subnet deletion.
 
 ## CI/CD
 
+All infrastructure changes go through GitHub Actions — no manual terraform commands.
+
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `terraform-plan.yml` | Pull Request to main | Runs terraform plan, posts result as PR comment |
-| `terraform-apply.yml` | Merge to main | Runs terraform apply automatically |
+| `terraform-plan.yml` | Pull Request to `main` | Runs terraform plan, posts result as PR comment |
+| `terraform-apply.yml` | Merge to `main` | Runs terraform apply automatically |
+| `terraform-destroy.yml` | Manual (workflow_dispatch) | Destroys all resources via GitHub UI button |
 
-**Authentication**: OIDC — no AWS access keys stored in GitHub. GitHub proves its identity to AWS and assumes an IAM role with temporary credentials.
+**Authentication**: OIDC — no AWS access keys stored in GitHub. GitHub proves its identity to AWS and assumes an IAM role with temporary credentials (valid 15 min–1 hr).
 
-**Provider caching**: `.terraform` directory cached via `actions/cache@v4` keyed on `.terraform.lock.hcl` — skips provider download on subsequent runs (~20-30s saved per run).
+**Provider caching**: `.terraform` directory cached via `actions/cache@v4` keyed on `.terraform.lock.hcl` — skips provider download on subsequent runs.
 
 **Terraform version**: 1.15.x
 
@@ -104,10 +103,15 @@ terraform destroy
 | NAT Gateway | 1 |
 | Subnets (public + private + DB) | 6 |
 | Route tables + associations | 9 |
-| Security groups (ALB + EC2 + RDS) | 3 |
-| Security group rules | 4 |
+| Security groups + rules | 7 |
 | EC2 instance | 1 |
 | ALB + target group + listener + attachment | 4 |
 | Random password + Secrets Manager | 3 |
 | RDS DB subnet group + RDS instance | 2 |
-| **Total** | **36** |
+| EKS cluster + node group | 2 |
+| EKS IAM roles + policy attachments | 5 |
+| EKS access entry + policy association | 2 |
+| OIDC provider + GHA IAM role + policy | 3 |
+| **Total** | **49** |
+
+**Always destroy after use — NAT Gateway + RDS cost ~$2/day.**
