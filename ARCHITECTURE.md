@@ -23,6 +23,8 @@ Internet
 [Secrets Manager] ← stores DB password (random_password)
     │
 [EKS Cluster] ← private subnets, 2x t3.micro worker nodes
+    │
+[kubectl / k8s manifests] ← nginx Deployment + LoadBalancer Service
 ```
 
 ---
@@ -54,6 +56,31 @@ Internet
 
 ---
 
+## Kubernetes (EKS)
+
+Manifests in `k8s/`:
+
+| File | Resource | Details |
+|---|---|---|
+| `deployment.yaml` | Deployment | 2 replicas, nginx:latest, port 80 |
+| `service.yaml` | Service (LoadBalancer) | Provisions an AWS ELB, exposes port 80 |
+
+Deploy flow:
+```
+terraform apply → EKS cluster + nodes ready
+    │
+    ▼
+aws eks update-kubeconfig --region us-east-1 --name demo-dev-eks
+    │
+    ▼
+kubectl apply -f k8s/
+    │
+    ▼
+kubectl get service nginx → ELB DNS name → open in browser
+```
+
+---
+
 ## CI/CD Pipeline (GitHub Actions + OIDC)
 
 ```
@@ -78,7 +105,7 @@ No static AWS credentials stored in GitHub. On each run:
 3. GHA assumes the role and gets temporary credentials (valid 15 min – 1 hr)
 
 ### Provider Caching
-`terraform/.terraform` directory is cached via `actions/cache@v4`, keyed by `.terraform.lock.hcl` hash. Skips provider download on repeat runs (~30s savings).
+`terraform/.terraform` directory is cached via `actions/cache@v4`, keyed by `.terraform.lock.hcl` hash. Skips provider download on repeat runs.
 
 ---
 
@@ -119,6 +146,28 @@ EKS cluster created by GHA role
 
 ---
 
+## Route53 — Custom Domain (Concept)
+
+Not implemented (cost ~$12/year for domain), but the pattern for production:
+
+```
+User → demo.yourdomain.com
+    │
+    ▼
+Route53 Hosted Zone
+  ALIAS record → ELB DNS name
+    │
+    ▼
+EKS LoadBalancer
+```
+
+Key points:
+- Use **ALIAS** record (not CNAME) — ELBs have DNS names, not fixed IPs
+- ALIAS is AWS-native, free, and works on apex domains (CNAME doesn't)
+- Terraform resource: `aws_route53_record` with `alias {}` block pointing to the ELB hostname
+
+---
+
 ## Issues Encountered and Fixed
 
 | Issue | Root Cause | Fix Applied |
@@ -127,6 +176,8 @@ EKS cluster created by GHA role
 | State lock migration failure | Switching `dynamodb_table` → `use_lockfile` mid-session caused DynamoDB checksum mismatch | Reverted to `dynamodb_table`; backend config changes need a maintenance window |
 | EKS t3.medium blocked | New AWS account Free Tier restriction | Changed node group to `t3.micro` |
 | kubectl access denied after apply | EKS cluster created by GHA role; local IAM user had no access | Full destroy + clean apply with `access_config` + `aws_eks_access_entry` baked in from the start |
+| OIDC provider destroyed with full destroy | OIDC + IAM role were in the same Terraform state — `terraform destroy` wiped them | Recreate manually via AWS CLI → `terraform import` to bring back into state |
+| `terraform import` failing with count error | State was empty; VPC module `count = length(aws_subnet.public)` can't evaluate with no state | Temporarily comment out all modules in main.tf + outputs.tf → run imports → restore |
 
 ---
 

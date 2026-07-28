@@ -1,0 +1,42 @@
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::259851212818:role/github-actions-terraform
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.15.0"
+
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: terraform/.terraform
+          key: terraform-${{ hashFiles('terraform/.terraform.lock.hcl') }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init -migrate-state
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: terraform destroy -auto-approve
