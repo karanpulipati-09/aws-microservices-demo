@@ -37,6 +37,17 @@ jobs:
         working-directory: terraform
         run: terraform init -migrate-state
 
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region us-east-1 --name demo-dev-eks
+        continue-on-error: true
+
+      - name: Delete Kubernetes resources
+        run: kubectl delete -f k8s/ --ignore-not-found=true
+        continue-on-error: true
+
       - name: Terraform Destroy
         working-directory: terraform
         run: terraform destroy -auto-approve
