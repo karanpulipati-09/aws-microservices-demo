@@ -47,3 +47,8 @@ output "eks_cluster_endpoint" {
   description = "EKS API server endpoint"
   value       = module.eks.cluster_endpoint
 }
+
+output "ecr_repository_urls" {
+  description = "ECR repository URLs — used in GHA build-push workflow"
+  value       = module.ecr.repository_urls
+}

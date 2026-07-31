@@ -134,6 +134,13 @@ module "eks" {
   admin_iam_arn      = "arn:aws:iam::259851212818:user/terraform-learner"
 }
 
+module "ecr" {
+  source = "./modules/ecr"
+
+  repositories = ["frontend", "api"]
+  environment  = var.environment
+}
+
 # OIDC — one-time setup, not a module
 # Tells AWS to trust GitHub Actions as an identity provider
 
