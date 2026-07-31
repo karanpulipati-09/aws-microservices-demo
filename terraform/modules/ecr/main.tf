@@ -17,6 +17,7 @@ resource "aws_ecr_repository" "repos" {
 resource "aws_ecr_lifecycle_policy" "repos" {
   for_each   = toset(var.repositories)
   repository = each.value
+  depends_on = [aws_ecr_repository.repos]
 
   policy = jsonencode({
     rules = [{
