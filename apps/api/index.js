@@ -1,6 +1,6 @@
 const http = require('http');
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000; // trigger build
 const ENV  = process.env.APP_ENV || 'dev';
 
 const server = http.createServer((req, res) => {
