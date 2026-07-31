@@ -95,19 +95,16 @@ module "alb" {
   alb_security_group_id = aws_security_group.alb.id
 }
 
-# Generate a random password for RDS
 resource "random_password" "db" {
   length  = 16
   special = false
 }
 
-# Create the secret container in Secrets Manager
 resource "aws_secretsmanager_secret" "db" {
   name                    = "${var.project_name}-${var.environment}-db-password"
   recovery_window_in_days = 0
 }
 
-# Store the generated password inside the secret
 resource "aws_secretsmanager_secret_version" "db" {
   secret_id     = aws_secretsmanager_secret.db.id
   secret_string = random_password.db.result
@@ -140,9 +137,6 @@ module "ecr" {
   repositories = ["frontend", "api"]
   environment  = var.environment
 }
-
-# OIDC — one-time setup, not a module
-# Tells AWS to trust GitHub Actions as an identity provider
 
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
