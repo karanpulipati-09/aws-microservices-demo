@@ -1,6 +1,6 @@
 ## aws-microservices-demo
 
-Multi-tier AWS infrastructure built with Terraform. Demonstrates production-grade networking, compute, load balancing, database, EKS, and CI/CD patterns.
+Multi-tier AWS infrastructure built with Terraform. Demonstrates production-grade networking, compute, load balancing, database, EKS, ECR, and CI/CD patterns.
 
 ## Architecture
 
@@ -13,8 +13,12 @@ EC2  (private subnet)  ← nginx
     ↓ MySQL port 3306 (EC2 SG → RDS SG only)
 RDS  (DB subnet)  ← MySQL 8.0
 
-EKS Cluster (private subnets — 2x t3.micro nodes)
+EKS Cluster (private subnets — 2x t3.micro nodes, v1.32)
     └── nginx Deployment (2 replicas) + LoadBalancer Service
+
+ECR (Elastic Container Registry)
+    ├── frontend  ← nginx:alpine image
+    └── api       ← Node.js REST API
 
 EC2/EKS outbound:
 EC2/nodes → NAT Gateway → Internet (package installs, image pulls)
@@ -34,8 +38,9 @@ random_password → Secrets Manager → RDS (never hardcoded)
 | EC2 | App server running nginx in private subnet |
 | RDS MySQL 8.0 | Database in isolated DB subnet, not publicly accessible |
 | Secrets Manager | Auto-generated DB password stored securely |
-| EKS Cluster | Kubernetes cluster in private subnets (v1.30) |
+| EKS Cluster | Kubernetes cluster in private subnets (v1.32) |
 | EKS Node Group | 2x t3.micro worker nodes with Auto Scaling (min 1, max 3) |
+| ECR | Private container registry — `frontend` + `api` repos |
 | S3 + DynamoDB | Terraform remote state + state locking |
 
 ## Security
@@ -48,6 +53,7 @@ random_password → Secrets Manager → RDS (never hardcoded)
 - `publicly_accessible = false` on RDS — double protection
 - EKS nodes in **private subnets** — only reachable via kubectl through IAM
 - No SSH keys — access via AWS Systems Manager (SSM) if needed
+- ECR repos have `scan_on_push = true` — Trivy also scans on every GHA build
 
 ## Modules
 
@@ -58,6 +64,7 @@ random_password → Secrets Manager → RDS (never hardcoded)
 | `modules/alb` | ALB, target group, listener, target group attachment |
 | `modules/rds` | RDS MySQL, DB subnet group, RDS security group |
 | `modules/eks` | EKS cluster, node group, IAM roles for control plane + nodes |
+| `modules/ecr` | ECR repos with lifecycle policy (keep last 5 images) |
 
 ## Kubernetes
 
@@ -77,21 +84,44 @@ kubectl get service nginx  # get LoadBalancer URL
 
 > **Note**: Delete kubernetes Services before destroying infra — `kubectl delete -f k8s/` — otherwise the ELB created by the Service will block VPC subnet deletion.
 
+## Applications
+
+| App | Source | ECR Repo | Port |
+|---|---|---|---|
+| frontend | `apps/frontend/` | `frontend` | 80 |
+| api | `apps/api/` | `api` | 3000 |
+
+The API exposes `/health` → `{ status: "ok", env: "dev", version: "1.0.0" }`.
+
+Images are tagged with the short git SHA (7 chars) — e.g. `079356d`. No `latest` tag.
+
 ## CI/CD
 
-All infrastructure changes go through GitHub Actions — no manual terraform commands.
+All infrastructure and image changes go through GitHub Actions — no manual commands needed.
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `terraform-plan.yml` | Pull Request to `main` | Runs terraform plan, posts result as PR comment |
-| `terraform-apply.yml` | Merge to `main` | Runs terraform apply automatically |
+| `terraform-plan.yml` | Pull Request to `main` (terraform/** paths) | Runs terraform plan, posts result as PR comment |
+| `terraform-apply.yml` | Merge to `main` (terraform/** paths) | Runs terraform apply automatically |
 | `terraform-destroy.yml` | Manual (workflow_dispatch) | Destroys all resources via GitHub UI button |
+| `build-push.yml` | Push to `main` (apps/** paths) | Builds frontend + api Docker images in parallel, scans with Trivy, pushes to ECR |
 
-**Authentication**: OIDC — no AWS access keys stored in GitHub. GitHub proves its identity to AWS and assumes an IAM role with temporary credentials (valid 15 min–1 hr).
+**Authentication**: OIDC — no AWS access keys stored in GitHub. GitHub proves its identity to AWS and assumes an IAM role with temporary credentials.
 
-**Provider caching**: `.terraform` directory cached via `actions/cache@v4` keyed on `.terraform.lock.hcl` — skips provider download on subsequent runs.
+**Bootstrap separation**: OIDC provider + IAM role live in `bootstrap/` with a separate Terraform state (`bootstrap/terraform.tfstate`). Running `terraform destroy` in `terraform/` never touches them — they survive every infra teardown.
+
+**Image tagging**: Short 7-char git SHA only (e.g. `079356d`). Every deployment is pinned to an exact commit for traceability and easy rollback.
+
+**Provider caching**: `.terraform` directory cached via `actions/cache@v4` keyed on `.terraform.lock.hcl`.
 
 **Terraform version**: 1.15.x
+
+## Terraform State
+
+| State file | Contains |
+|---|---|
+| `bootstrap/terraform.tfstate` | OIDC provider + GHA IAM role — **never destroyed** |
+| `terraform/terraform.tfstate` | All infra (VPC, EKS, ECR, RDS, etc.) — freely destroyable |
 
 ## Resources created
 
@@ -111,7 +141,6 @@ All infrastructure changes go through GitHub Actions — no manual terraform com
 | EKS cluster + node group | 2 |
 | EKS IAM roles + policy attachments | 5 |
 | EKS access entry + policy association | 2 |
-| OIDC provider + GHA IAM role + policy | 3 |
-| **Total** | **49** |
-
-**Always destroy after use — NAT Gateway + RDS cost ~$2/day.**
+| ECR repos + lifecycle policies | 4 |
+| OIDC provider + GHA IAM role + policy (bootstrap) | 3 |
+| **Total** | **53** |
