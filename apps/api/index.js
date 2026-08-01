@@ -1,6 +1,6 @@
 const http = require('http');
 
-const PORT = process.env.PORT || 3000; // trigger build
+const PORT = process.env.PORT || 3000;
 const ENV  = process.env.APP_ENV || 'dev';
 
 const server = http.createServer((req, res) => {
@@ -17,3 +17,4 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => console.log(`API running on port ${PORT} [${ENV}]`));
+// v1.0.1
