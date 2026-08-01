@@ -33,11 +33,6 @@ output "db_secret_name" {
   value       = aws_secretsmanager_secret.db.name
 }
 
-output "github_actions_role_arn" {
-  description = "IAM role ARN — paste this into the GHA workflow files"
-  value       = aws_iam_role.github_actions.arn
-}
-
 output "eks_cluster_name" {
   description = "EKS cluster name — use with aws eks update-kubeconfig"
   value       = module.eks.cluster_name
