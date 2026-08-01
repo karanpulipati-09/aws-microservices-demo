@@ -17,4 +17,4 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => console.log(`API running on port ${PORT} [${ENV}]`));
-// v1.0.1
+// v1.0.2
