@@ -18,3 +18,8 @@ variable "admin_iam_arn" {
   type        = string
   description = "IAM user/role ARN to grant EKS cluster admin access"
 }
+
+variable "gha_role_arn" {
+  type        = string
+  description = "GitHub Actions IAM role ARN to grant EKS cluster admin access for deployments"
+}

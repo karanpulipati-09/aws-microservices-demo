@@ -129,6 +129,7 @@ module "eks" {
   vpc_id             = module.vpc.vpc_id
   private_subnet_ids = module.vpc.private_subnet_ids
   admin_iam_arn      = "arn:aws:iam::259851212818:user/terraform-learner"
+  gha_role_arn       = "arn:aws:iam::259851212818:role/github-actions-terraform"
 }
 
 module "ecr" {
