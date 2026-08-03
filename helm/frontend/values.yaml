@@ -1,4 +1,4 @@
-replicaCount: 1
+replicaCount: 2
 
 image:
   repository: 259851212818.dkr.ecr.us-east-1.amazonaws.com/frontend
