@@ -13,8 +13,13 @@ EC2  (private subnet)  ← nginx
     ↓ MySQL port 3306 (EC2 SG → RDS SG only)
 RDS  (DB subnet)  ← MySQL 8.0
 
-EKS Cluster (private subnets — 2x t3.micro nodes, v1.32)
-    └── nginx Deployment (2 replicas) + LoadBalancer Service
+EKS Cluster (private subnets — 2x t3.small nodes, v1.32)
+    ├── Ingress (nginx) ← single ELB entry point
+    │       ├── /api/* → api pod (ClusterIP)
+    │       └── /*     → frontend pod (ClusterIP)
+    ├── frontend pod   ← nginx serving HTML/JS (ECR image)
+    ├── api pod        ← Node.js REST API (ECR image)
+    └── postgres pod   ← PostgreSQL 18 (Bitnami chart, no persistence)
 
 ECR (Elastic Container Registry)
     ├── frontend  ← nginx:alpine image
@@ -39,7 +44,7 @@ random_password → Secrets Manager → RDS (never hardcoded)
 | RDS MySQL 8.0 | Database in isolated DB subnet, not publicly accessible |
 | Secrets Manager | Auto-generated DB password stored securely |
 | EKS Cluster | Kubernetes cluster in private subnets (v1.32) |
-| EKS Node Group | 2x t3.micro worker nodes with Auto Scaling (min 1, max 3) |
+| EKS Node Group | 2x t3.small worker nodes with Auto Scaling (min 1, max 3) |
 | ECR | Private container registry — `frontend` + `api` repos |
 | S3 + DynamoDB | Terraform remote state + state locking |
 
@@ -66,23 +71,35 @@ random_password → Secrets Manager → RDS (never hardcoded)
 | `modules/eks` | EKS cluster, node group, IAM roles for control plane + nodes |
 | `modules/ecr` | ECR repos with lifecycle policy (keep last 5 images) |
 
-## Kubernetes
+## Kubernetes + Helm
 
-Manifests in `k8s/`:
+Charts in `helm/`:
 
-| File | Resource | Details |
+| Chart | Services | Namespaces |
 |---|---|---|
-| `deployment.yaml` | Deployment | 2 replicas, nginx:latest, port 80 |
-| `service.yaml` | Service (LoadBalancer) | Provisions an AWS ELB, exposes port 80 |
+| `helm/frontend` | ClusterIP port 80 | dev / staging / prod |
+| `helm/api` | ClusterIP port 3000 | dev / staging / prod |
+| `bitnami/postgresql` | ClusterIP port 5432 | dev / staging / prod |
 
-After EKS apply:
+**Ingress** (nginx controller) routes all traffic through a single ELB:
+- `/*` → frontend service
+- `/api/*` → api service
+
 ```bash
 aws eks update-kubeconfig --region us-east-1 --name demo-dev-eks
-kubectl apply -f k8s/
-kubectl get service nginx  # get LoadBalancer URL
+helm install frontend ./helm/frontend -n dev
+helm install api ./helm/api -n dev
+helm install postgres bitnami/postgresql -n dev --set primary.persistence.enabled=false
+kubectl get ingress -n dev  # get single ELB URL
 ```
 
-> **Note**: Delete kubernetes Services before destroying infra — `kubectl delete -f k8s/` — otherwise the ELB created by the Service will block VPC subnet deletion.
+**Per-environment deploy** (same chart, different values):
+```bash
+helm install frontend ./helm/frontend -n staging -f helm/frontend/values-staging.yaml
+helm install frontend ./helm/frontend -n prod    -f helm/frontend/values-prod.yaml
+```
+
+> **Note**: Delete Ingress before destroying infra — `helm uninstall ingress-nginx -n ingress-nginx` — otherwise the ELB will block VPC subnet deletion.
 
 ## Applications
 
