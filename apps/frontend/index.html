@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AWS Microservices Demo</title>
+  <title>AWS Microservices Demo — Karan Pulipati</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -13,25 +13,47 @@
       color: #e2e8f0;
       min-height: 100vh;
       display: flex;
+      flex-direction: column;
       align-items: center;
-      justify-content: center;
     }
 
-    .container {
+    .page {
       max-width: 700px;
       width: 100%;
-      padding: 40px 24px;
+      padding: 40px 24px 24px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
     }
 
-    .header {
-      margin-bottom: 40px;
+    .top-bar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 28px;
     }
+
+    .github-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #64748b;
+      text-decoration: none;
+      border: 1px solid #2d3148;
+      padding: 6px 12px;
+      border-radius: 6px;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .github-link:hover { color: #94a3b8; border-color: #475569; }
+
+    .header { margin-bottom: 32px; }
 
     .logo {
       display: flex;
       align-items: center;
       gap: 12px;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
 
     .logo-icon {
@@ -43,6 +65,7 @@
       align-items: center;
       justify-content: center;
       font-size: 20px;
+      flex-shrink: 0;
     }
 
     h1 {
@@ -55,21 +78,55 @@
     .subtitle {
       color: #64748b;
       font-size: 14px;
-      margin-top: 4px;
+      margin-top: 2px;
     }
+
+    .author {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .author-name {
+      font-size: 14px;
+      color: #64748b;
+    }
+
+    .author-name span {
+      color: #94a3b8;
+      font-weight: 500;
+    }
+
+    .author-links { display: flex; gap: 6px; }
+
+    .author-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      border: 1px solid #2d3148;
+      color: #475569;
+      text-decoration: none;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .author-link:hover { color: #94a3b8; border-color: #475569; }
 
     .cards {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-      margin-bottom: 24px;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 14px;
     }
 
     .card {
       background: #1e2130;
       border: 1px solid #2d3148;
       border-radius: 12px;
-      padding: 20px;
+      padding: 18px;
     }
 
     .card-label {
@@ -81,7 +138,7 @@
     }
 
     .card-value {
-      font-size: 18px;
+      font-size: 16px;
       font-weight: 600;
       color: #f1f5f9;
     }
@@ -110,12 +167,29 @@
       animation: pulse 2s infinite;
     }
 
+    .sha-value {
+      font-family: 'Courier New', monospace;
+      font-size: 15px;
+      color: #a78bfa;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .sha-sub {
+      font-size: 10px;
+      color: #334155;
+      font-family: 'Courier New', monospace;
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
     .api-status {
       background: #1e2130;
       border: 1px solid #2d3148;
       border-radius: 12px;
       padding: 20px;
-      margin-bottom: 24px;
+      margin-bottom: 14px;
     }
 
     .api-row {
@@ -124,10 +198,7 @@
       justify-content: space-between;
     }
 
-    .api-label {
-      font-size: 14px;
-      color: #94a3b8;
-    }
+    .api-label { font-size: 14px; color: #94a3b8; }
 
     .api-value {
       font-size: 13px;
@@ -136,23 +207,9 @@
       border-radius: 6px;
     }
 
-    .api-value.ok {
-      background: #052e16;
-      color: #4ade80;
-      border: 1px solid #14532d;
-    }
-
-    .api-value.error {
-      background: #2d0c0c;
-      color: #f87171;
-      border: 1px solid #5c1515;
-    }
-
-    .api-value.loading {
-      background: #1c1a0f;
-      color: #facc15;
-      border: 1px solid #3d3510;
-    }
+    .api-value.ok    { background: #052e16; color: #4ade80; border: 1px solid #14532d; }
+    .api-value.error { background: #2d0c0c; color: #f87171; border: 1px solid #5c1515; }
+    .api-value.loading { background: #1c1a0f; color: #facc15; border: 1px solid #3d3510; }
 
     .api-detail {
       margin-top: 12px;
@@ -169,21 +226,18 @@
       border: 1px solid #2d3148;
       border-radius: 12px;
       padding: 20px;
+      margin-bottom: 32px;
     }
 
     .stack-title {
-      font-size: 12px;
+      font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 1px;
       color: #475569;
       margin-bottom: 14px;
     }
 
-    .stack-items {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
+    .stack-items { display: flex; flex-wrap: wrap; gap: 8px; }
 
     .tag {
       font-size: 12px;
@@ -194,6 +248,17 @@
       color: #94a3b8;
     }
 
+    footer {
+      width: 100%;
+      text-align: center;
+      font-size: 12px;
+      color: #334155;
+      padding: 18px 24px;
+      border-top: 1px solid #1a1f30;
+    }
+
+    footer strong { color: #475569; font-weight: 500; }
+
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.4; }
@@ -201,13 +266,40 @@
   </style>
 </head>
 <body>
-  <div class="container">
+  <div class="page">
+    <div class="top-bar">
+      <!-- Replace href with your GitHub repo URL -->
+      <a class="github-link" href="#" target="_blank">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+        Source Code
+      </a>
+    </div>
+
     <div class="header">
       <div class="logo">
         <div class="logo-icon">☁️</div>
         <div>
           <h1>AWS Microservices Demo</h1>
           <div class="subtitle">Portfolio project — Terraform + EKS + Helm</div>
+        </div>
+      </div>
+      <div class="author">
+        <div class="author-name">Built by <span>Karan Pulipati</span></div>
+        <div class="author-links">
+          <!-- Replace href with your LinkedIn URL -->
+          <a class="author-link" href="#" target="_blank" title="LinkedIn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+            </svg>
+          </a>
+          <!-- Replace href with your GitHub profile URL -->
+          <a class="author-link" href="#" target="_blank" title="GitHub">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+            </svg>
+          </a>
         </div>
       </div>
     </div>
@@ -221,7 +313,12 @@
       </div>
       <div class="card">
         <div class="card-label">Namespace</div>
-        <div class="card-value" id="env-value">dev</div>
+        <div class="card-value" id="env-value">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Deploy</div>
+        <div class="sha-value" id="sha-value">—</div>
+        <div class="sha-sub">git sha</div>
       </div>
     </div>
 
@@ -248,18 +345,26 @@
     </div>
   </div>
 
+  <footer>
+    <strong>Karan Pulipati</strong> &nbsp;·&nbsp; DevOps Engineer &nbsp;·&nbsp; AWS &nbsp;·&nbsp; Kubernetes &nbsp;·&nbsp; Terraform
+  </footer>
+
   <script>
-    const badge = document.getElementById('api-badge');
-    const detail = document.getElementById('api-detail');
+    const badge    = document.getElementById('api-badge');
+    const detail   = document.getElementById('api-detail');
     const envValue = document.getElementById('env-value');
+    const shaValue = document.getElementById('sha-value');
 
     fetch('/api/health')
       .then(r => r.json())
       .then(d => {
         badge.textContent = 'healthy';
         badge.className = 'api-value ok';
-        detail.textContent = JSON.stringify(d);
+        const parts = [`status: ${d.status}`, `env: ${d.env}`, `version: ${d.version}`];
+        if (d.sha) parts.push(`sha: ${d.sha}`);
+        detail.textContent = parts.join('  ·  ');
         if (d.env) envValue.textContent = d.env;
+        if (d.sha) shaValue.textContent = d.sha;
       })
       .catch(() => {
         badge.textContent = 'unreachable';
