@@ -1,0 +1,70 @@
+name: CD — Deploy to Dev
+
+on:
+  # Triggered automatically after CI build succeeds (app code change)
+  workflow_run:
+    workflows: ["CI — Build and Push"]
+    types: [completed]
+    branches: [main]
+  # Triggered directly on helm config changes (no rebuild needed)
+  push:
+    branches: [main]
+    paths:
+      - 'helm/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 259851212818
+  EKS_CLUSTER: demo-dev-eks
+
+jobs:
+  deploy:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    # Skip if triggered by workflow_run but the build failed
+    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/github-actions-terraform
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # App code changed — use the SHA from the build that triggered us
+            echo "TAG=$(echo ${{ github.event.workflow_run.head_sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+          else
+            # Helm-only change — use the tag already in values.yaml
+            echo "TAG=$(grep 'tag:' helm/frontend/values.yaml | head -1 | awk '{print $2}' | tr -d '\"')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Connect to EKS
+        run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER }}
+
+      - name: Deploy frontend
+        run: |
+          helm upgrade --install frontend ./helm/frontend \
+            --namespace dev \
+            --set image.tag=${{ steps.tag.outputs.TAG }}
+
+      - name: Deploy api
+        run: |
+          helm upgrade --install api ./helm/api \
+            --namespace dev \
+            --set image.tag=${{ steps.tag.outputs.TAG }}
+
+      - name: Verify rollout
+        run: |
+          kubectl rollout status deployment/frontend-frontend -n dev --timeout=120s
+          kubectl rollout status deployment/api-api -n dev --timeout=120s
