@@ -14,7 +14,7 @@
   <span class="badge">Running on EKS</span>
   <div id="api-response">Calling API...</div>
   <script>
-    fetch('/api/health')
+    fetch('http://a7aadda37251541c1b2b58b26a2dcc41-1702393043.us-east-1.elb.amazonaws.com:3000/health')
       .then(r => r.json())
       .then(d => document.getElementById('api-response').innerText = 'API: ' + d.status)
       .catch(() => document.getElementById('api-response').innerText = 'API unreachable');
