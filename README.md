@@ -1,36 +1,37 @@
 ## aws-microservices-demo
 
-Multi-tier AWS infrastructure built with Terraform. Demonstrates production-grade networking, compute, load balancing, database, EKS, ECR, and CI/CD patterns.
+Production-grade AWS infrastructure portfolio project built by **[Karan Pulipati](https://www.linkedin.com/in/karan-pulipati)**.  
+Demonstrates Terraform, EKS, Helm, and fully automated CI/CD from code push to live deployment.
 
 ## Architecture
 
 ```
 Internet
     ↓ HTTP port 80
-ALB  (public subnets — us-east-1a, us-east-1b)
-    ↓ HTTP port 80 (ALB SG → EC2 SG only)
-EC2  (private subnet)  ← nginx
-    ↓ MySQL port 3306 (EC2 SG → RDS SG only)
-RDS  (DB subnet)  ← MySQL 8.0
+nginx Ingress  ← single ELB entry point
+    ├── /api/* → api service (ClusterIP :3000)
+    └── /*     → frontend service (ClusterIP :80)
 
 EKS Cluster (private subnets — 2x t3.small nodes, v1.32)
-    ├── Ingress (nginx) ← single ELB entry point
-    │       ├── /api/* → api pod (ClusterIP)
-    │       └── /*     → frontend pod (ClusterIP)
-    ├── frontend pod   ← nginx serving HTML/JS (ECR image)
-    ├── api pod        ← Node.js REST API (ECR image)
-    └── postgres pod   ← PostgreSQL 18 (Bitnami chart, no persistence)
+    ├── frontend pod   ← nginx serving HTML/JS (ECR image, 2 replicas)
+    ├── api pod        ← Node.js REST API (ECR image, 2 replicas)
+    └── postgres pod   ← PostgreSQL 18 (Bitnami chart, persistence disabled*)
 
 ECR (Elastic Container Registry)
     ├── frontend  ← nginx:alpine image
     └── api       ← Node.js REST API
 
-EC2/EKS outbound:
-EC2/nodes → NAT Gateway → Internet (package installs, image pulls)
+ALB  (public subnets — us-east-1a, us-east-1b)
+    ↓ HTTP port 80
+EC2  (private subnet)  ← nginx
+    ↓ MySQL port 3306
+RDS  (DB subnet)  ← MySQL 8.0 (isolated, not publicly accessible)
 
-Password flow:
-random_password → Secrets Manager → RDS (never hardcoded)
+EC2/nodes → NAT Gateway → Internet (package installs, image pulls)
+Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 ```
+
+> *EBS CSI driver not yet installed — postgres uses ephemeral container storage (data lost on pod restart). Fix planned: add EBS CSI addon via Terraform + enable persistence.
 
 ## Infrastructure
 
@@ -50,7 +51,7 @@ random_password → Secrets Manager → RDS (never hardcoded)
 
 ## Security
 
-- EC2 is in a **private subnet** — not directly reachable from internet
+- EC2 in **private subnet** — not directly reachable from internet
 - EC2 SG allows port 80 **only from ALB SG**
 - RDS SG allows port 3306 **only from EC2 SG**
 - DB subnet has **no internet route** — RDS completely isolated
@@ -58,7 +59,8 @@ random_password → Secrets Manager → RDS (never hardcoded)
 - `publicly_accessible = false` on RDS — double protection
 - EKS nodes in **private subnets** — only reachable via kubectl through IAM
 - No SSH keys — access via AWS Systems Manager (SSM) if needed
-- ECR repos have `scan_on_push = true` — Trivy also scans on every GHA build
+- ECR repos have `scan_on_push = true` — Trivy scans on every CI build
+- GHA IAM role uses **OIDC** — no long-lived AWS credentials stored in GitHub
 
 ## Modules
 
@@ -68,29 +70,32 @@ random_password → Secrets Manager → RDS (never hardcoded)
 | `modules/ec2` | EC2 instance with nginx, AMI auto-detected |
 | `modules/alb` | ALB, target group, listener, target group attachment |
 | `modules/rds` | RDS MySQL, DB subnet group, RDS security group |
-| `modules/eks` | EKS cluster, node group, IAM roles for control plane + nodes |
+| `modules/eks` | EKS cluster, node group, IAM roles, access entries for admin + GHA role |
 | `modules/ecr` | ECR repos with lifecycle policy (keep last 5 images) |
 
 ## Kubernetes + Helm
 
 Charts in `helm/`:
 
-| Chart | Services | Namespaces |
-|---|---|---|
-| `helm/frontend` | ClusterIP port 80 | dev / staging / prod |
-| `helm/api` | ClusterIP port 3000 | dev / staging / prod |
-| `bitnami/postgresql` | ClusterIP port 5432 | dev / staging / prod |
+| Chart | Service | Port | Replicas | Strategy |
+|---|---|---|---|---|
+| `helm/frontend` | ClusterIP | 80 | 2 (dev) / 3 (prod) | RollingUpdate maxSurge:1 maxUnavailable:1 |
+| `helm/api` | ClusterIP | 3000 | 2 (dev) / 3 (prod) | RollingUpdate maxSurge:1 maxUnavailable:1 |
+| `bitnami/postgresql` | ClusterIP | 5432 | 1 | — |
 
 **Ingress** (nginx controller) routes all traffic through a single ELB:
-- `/*` → frontend service
 - `/api/*` → api service
+- `/*` → frontend service
 
 ```bash
 aws eks update-kubeconfig --region us-east-1 --name demo-dev-eks
+
+# Install (first time)
 helm install frontend ./helm/frontend -n dev
 helm install api ./helm/api -n dev
 helm install postgres bitnami/postgresql -n dev --set primary.persistence.enabled=false
-kubectl get ingress -n dev  # get single ELB URL
+
+kubectl get ingress -n dev  # get ELB URL
 ```
 
 **Per-environment deploy** (same chart, different values):
@@ -99,7 +104,7 @@ helm install frontend ./helm/frontend -n staging -f helm/frontend/values-staging
 helm install frontend ./helm/frontend -n prod    -f helm/frontend/values-prod.yaml
 ```
 
-> **Note**: Delete Ingress before destroying infra — `helm uninstall ingress-nginx -n ingress-nginx` — otherwise the ELB will block VPC subnet deletion.
+> **Teardown note**: Delete Ingress before destroying infra — `helm uninstall ingress-nginx -n ingress-nginx` — otherwise the ELB blocks VPC subnet deletion.
 
 ## Applications
 
@@ -108,30 +113,44 @@ helm install frontend ./helm/frontend -n prod    -f helm/frontend/values-prod.ya
 | frontend | `apps/frontend/` | `frontend` | 80 |
 | api | `apps/api/` | `api` | 3000 |
 
-The API exposes `/health` → `{ status: "ok", env: "dev", version: "1.0.0" }`.
+The API exposes `/health` → `{ status: "ok", env: "dev", version: "1.0.0", sha: "<image-tag>" }`.
 
-Images are tagged with the short git SHA (7 chars) — e.g. `079356d`. No `latest` tag.
+Images are tagged with the short git SHA (7 chars) — e.g. `9b04499`. No `latest` tag.
 
 ## CI/CD
 
-All infrastructure and image changes go through GitHub Actions — no manual commands needed.
+Fully automated pipeline — code push to live deployment with no manual steps.
+
+```
+apps/** push                         helm/** push
+      ↓                                    ↓
+CI — Build and Push              CD — Deploy to Dev
+  build frontend (parallel)   ←──────────────────────
+  build api      (parallel)        reads tag from values.yaml
+  trivy scan
+  push to ECR
+      ↓ on success (workflow_run)
+CD — Deploy to Dev
+  helm upgrade frontend
+  helm upgrade api
+  kubectl rollout status  ← fails workflow if pods don't come up
+```
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `terraform-plan.yml` | Pull Request to `main` (terraform/** paths) | Runs terraform plan, posts result as PR comment |
-| `terraform-apply.yml` | Merge to `main` (terraform/** paths) | Runs terraform apply automatically |
-| `terraform-destroy.yml` | Manual (workflow_dispatch) | Destroys all resources via GitHub UI button |
-| `build-push.yml` | Push to `main` (apps/** paths) | Builds frontend + api Docker images in parallel, scans with Trivy, pushes to ECR |
+| `ci-build-push.yml` (CI) | Push to `main` — `apps/**` | Builds frontend + api in parallel, Trivy scan, pushes to ECR |
+| `deploy.yml` (CD) | `workflow_run` on CI success OR push to `helm/**` | `helm upgrade` both charts, verifies rollout |
+| `terraform-plan.yml` | Pull Request to `main` — `terraform/**` | Runs terraform plan, posts result as PR comment |
+| `terraform-apply.yml` | Push to `main` — `terraform/**` | Runs terraform apply automatically |
+| `terraform-destroy.yml` | Manual (`workflow_dispatch`) | Destroys all resources via GitHub UI button |
 
-**Authentication**: OIDC — no AWS access keys stored in GitHub. GitHub proves its identity to AWS and assumes an IAM role with temporary credentials.
+**Authentication**: OIDC — no AWS access keys stored in GitHub.
 
-**Bootstrap separation**: OIDC provider + IAM role live in `bootstrap/` with a separate Terraform state (`bootstrap/terraform.tfstate`). Running `terraform destroy` in `terraform/` never touches them — they survive every infra teardown.
+**Bootstrap separation**: OIDC provider + IAM role live in `bootstrap/` with a separate Terraform state. Running `terraform destroy` on main infra never touches them.
 
-**Image tagging**: Short 7-char git SHA only (e.g. `079356d`). Every deployment is pinned to an exact commit for traceability and easy rollback.
+**Image tagging**: Short 7-char git SHA only (e.g. `9b04499`). Every deployment is pinned to an exact commit — full traceability and easy rollback.
 
-**Provider caching**: `.terraform` directory cached via `actions/cache@v4` keyed on `.terraform.lock.hcl`.
-
-**Terraform version**: 1.15.x
+**Rolling updates**: `maxSurge: 1, maxUnavailable: 1` — zero-downtime deploys. New pod created first, old pod killed after readiness probe passes.
 
 ## Terraform State
 
@@ -157,7 +176,7 @@ All infrastructure and image changes go through GitHub Actions — no manual com
 | RDS DB subnet group + RDS instance | 2 |
 | EKS cluster + node group | 2 |
 | EKS IAM roles + policy attachments | 5 |
-| EKS access entry + policy association | 2 |
+| EKS access entries + policy associations (admin + GHA) | 4 |
 | ECR repos + lifecycle policies | 4 |
 | OIDC provider + GHA IAM role + policy (bootstrap) | 3 |
-| **Total** | **53** |
+| **Total** | **55** |
