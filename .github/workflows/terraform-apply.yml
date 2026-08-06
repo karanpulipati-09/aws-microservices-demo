@@ -42,6 +42,12 @@ jobs:
         working-directory: terraform
         run: terraform init -migrate-state
 
+      - name: Import pre-existing Kubernetes resources
+        working-directory: terraform
+        continue-on-error: true
+        run: |
+          terraform import kubernetes_namespace.dev dev
+
       - name: Terraform Apply
         working-directory: terraform
         run: terraform apply -auto-approve
