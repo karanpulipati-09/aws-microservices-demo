@@ -57,12 +57,14 @@ jobs:
         run: |
           helm upgrade --install frontend ./helm/frontend \
             --namespace dev \
+            --create-namespace \
             --set image.tag=${{ steps.tag.outputs.TAG }}
 
       - name: Deploy api
         run: |
           helm upgrade --install api ./helm/api \
             --namespace dev \
+            --create-namespace \
             --set image.tag=${{ steps.tag.outputs.TAG }}
 
       - name: Verify rollout
