@@ -156,4 +156,104 @@ resource "helm_release" "ingress_nginx" {
   depends_on = [module.eks]
 }
 
+# dev namespace — managed by Terraform so RBAC resources have a target
+resource "kubernetes_namespace" "dev" {
+  metadata {
+    name = "dev"
+  }
+  depends_on = [module.eks]
+}
+
+# gp3 StorageClass — default class for PVCs (postgres etc.)
+resource "kubernetes_storage_class" "gp3" {
+  metadata {
+    name = "gp3"
+    annotations = {
+      "storageclass.kubernetes.io/is-default-class" = "true"
+    }
+  }
+  storage_provisioner    = "ebs.csi.aws.com"
+  reclaim_policy         = "Delete"
+  volume_binding_mode    = "WaitForFirstConsumer"
+  allow_volume_expansion = true
+  parameters = {
+    type = "gp3"
+  }
+  depends_on = [module.eks]
+}
+
+# RBAC — dev-readonly: read-only access to dev namespace
+resource "kubernetes_service_account" "dev_readonly" {
+  metadata {
+    name      = "dev-readonly"
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "dev_readonly" {
+  metadata {
+    name      = "dev-readonly"
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+  rule {
+    api_groups = ["", "apps"]
+    resources  = ["pods", "services", "endpoints", "configmaps", "deployments", "replicasets"]
+    verbs      = ["get", "list", "watch"]
+  }
+}
+
+resource "kubernetes_role_binding" "dev_readonly" {
+  metadata {
+    name      = "dev-readonly"
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.dev_readonly.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.dev_readonly.metadata[0].name
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+}
+
+# RBAC — dev-admin: full access to dev namespace
+resource "kubernetes_service_account" "dev_admin" {
+  metadata {
+    name      = "dev-admin"
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+}
+
+resource "kubernetes_role" "dev_admin" {
+  metadata {
+    name      = "dev-admin"
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+  rule {
+    api_groups = ["", "apps", "batch"]
+    resources  = ["*"]
+    verbs      = ["*"]
+  }
+}
+
+resource "kubernetes_role_binding" "dev_admin" {
+  metadata {
+    name      = "dev-admin"
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role.dev_admin.metadata[0].name
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.dev_admin.metadata[0].name
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+}
+
 # OIDC + IAM role live in bootstrap/ state — never destroyed with infra
