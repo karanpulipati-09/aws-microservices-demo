@@ -15,7 +15,7 @@ nginx Ingress  ← single ELB entry point
 EKS Cluster (private subnets — 2x t3.small nodes, v1.32)
     ├── frontend pod   ← nginx serving HTML/JS (ECR image, 2 replicas)
     ├── api pod        ← Node.js REST API (ECR image, 2 replicas)
-    └── postgres pod   ← PostgreSQL 18 (Bitnami chart, persistence disabled*)
+    └── postgres pod   ← PostgreSQL 18 (Bitnami chart, gp3 EBS persistence enabled)
 
 ECR (Elastic Container Registry)
     ├── frontend  ← nginx:alpine image
@@ -31,7 +31,6 @@ EC2/nodes → NAT Gateway → Internet (package installs, image pulls)
 Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 ```
 
-> *EBS CSI driver not yet installed — postgres uses ephemeral container storage (data lost on pod restart). Fix planned: add EBS CSI addon via Terraform + enable persistence.
 
 ## Infrastructure
 
@@ -46,6 +45,11 @@ Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 | Secrets Manager | Auto-generated DB password stored securely |
 | EKS Cluster | Kubernetes cluster in private subnets (v1.32) |
 | EKS Node Group | 2x t3.small worker nodes with Auto Scaling (min 1, max 3) |
+| EKS OIDC Provider | Enables IRSA — pods assume IAM roles via service accounts |
+| EBS CSI Driver | EKS addon for EBS-backed PersistentVolumes (IRSA-secured) |
+| gp3 StorageClass | Default storage class for PVCs — faster and cheaper than gp2 |
+| ingress-nginx | Helm-managed nginx ingress controller — single ELB entry point |
+| RBAC | `dev-admin` + `dev-readonly` roles in `dev` namespace |
 | ECR | Private container registry — `frontend` + `api` repos |
 | S3 + DynamoDB | Terraform remote state + state locking |
 
@@ -61,6 +65,9 @@ Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 - No SSH keys — access via AWS Systems Manager (SSM) if needed
 - ECR repos have `scan_on_push = true` — Trivy scans on every CI build
 - GHA IAM role uses **OIDC** — no long-lived AWS credentials stored in GitHub
+- RBAC — `dev-readonly` (get/list/watch only) + `dev-admin` (full access) in `dev` namespace
+- EBS CSI IRSA — addon IAM role scoped to `kube-system:ebs-csi-controller-sa` only
+- Terraform PR pipeline runs **gitleaks** (secrets scan) + **tfsec** (misconfiguration scan) on every PR
 
 ## Modules
 
@@ -70,7 +77,7 @@ Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 | `modules/ec2` | EC2 instance with nginx, AMI auto-detected |
 | `modules/alb` | ALB, target group, listener, target group attachment |
 | `modules/rds` | RDS MySQL, DB subnet group, RDS security group |
-| `modules/eks` | EKS cluster, node group, IAM roles, access entries for admin + GHA role |
+| `modules/eks` | EKS cluster, node group, IAM roles, access entries, OIDC provider, EBS CSI IRSA + addon |
 | `modules/ecr` | ECR repos with lifecycle policy (keep last 5 images) |
 
 ## Kubernetes + Helm
@@ -140,7 +147,7 @@ CD — Deploy to Dev
 |---|---|---|
 | `ci-build-push.yml` (CI) | Push to `main` — `apps/**` | Builds frontend + api in parallel, Trivy scan, pushes to ECR |
 | `deploy.yml` (CD) | `workflow_run` on CI success OR push to `helm/**` | `helm upgrade` both charts, verifies rollout |
-| `terraform-plan.yml` | Pull Request to `main` — `terraform/**` | Runs terraform plan, posts result as PR comment |
+| `terraform-plan.yml` | Pull Request to `main` — `terraform/**` | gitleaks (secrets) + tflint + tfsec + infracost cost delta, runs terraform plan, posts result as PR comment |
 | `terraform-apply.yml` | Push to `main` — `terraform/**` | Runs terraform apply automatically |
 | `terraform-destroy.yml` | Manual (`workflow_dispatch`) | Destroys all resources via GitHub UI button |
 
@@ -177,6 +184,12 @@ CD — Deploy to Dev
 | EKS cluster + node group | 2 |
 | EKS IAM roles + policy attachments | 5 |
 | EKS access entries + policy associations (admin + GHA) | 4 |
+| EKS OIDC provider | 1 |
+| EBS CSI IAM role + policy attachment + addon | 3 |
+| ingress-nginx helm release | 1 |
+| gp3 StorageClass | 1 |
+| dev namespace | 1 |
+| RBAC (roles + bindings + service accounts) | 6 |
 | ECR repos + lifecycle policies | 4 |
 | OIDC provider + GHA IAM role + policy (bootstrap) | 3 |
-| **Total** | **55** |
+| **Total** | **67** |
