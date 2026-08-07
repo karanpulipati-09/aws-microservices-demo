@@ -49,6 +49,19 @@ jobs:
         run: kubectl delete -f k8s/ --ignore-not-found=true
         continue-on-error: true
 
+      - name: Remove Kubernetes resources from state
+        working-directory: terraform
+        continue-on-error: true
+        run: |
+          terraform state rm kubernetes_namespace.dev || true
+          terraform state rm kubernetes_storage_class.gp3 || true
+          terraform state rm kubernetes_role.dev_admin || true
+          terraform state rm kubernetes_role.dev_readonly || true
+          terraform state rm kubernetes_role_binding.dev_admin || true
+          terraform state rm kubernetes_role_binding.dev_readonly || true
+          terraform state rm kubernetes_service_account.dev_admin || true
+          terraform state rm kubernetes_service_account.dev_readonly || true
+
       - name: Terraform Destroy
         working-directory: terraform
         run: terraform destroy -auto-approve
