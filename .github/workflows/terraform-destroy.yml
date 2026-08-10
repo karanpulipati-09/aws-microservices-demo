@@ -63,6 +63,7 @@ jobs:
           terraform state rm kubernetes_service_account.dev_readonly || true
           terraform state rm helm_release.metrics_server || true
           terraform state rm helm_release.prometheus || true
+          terraform state rm helm_release.cluster_autoscaler || true
 
       - name: Terraform Destroy
         working-directory: terraform

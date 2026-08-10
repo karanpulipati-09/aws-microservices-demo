@@ -256,6 +256,42 @@ resource "kubernetes_role_binding" "dev_admin" {
   }
 }
 
+# Cluster Autoscaler — watches Pending pods and scales ASG nodes up/down
+resource "helm_release" "cluster_autoscaler" {
+  name       = "cluster-autoscaler"
+  repository = "https://kubernetes.github.io/autoscaler"
+  chart      = "cluster-autoscaler"
+  namespace  = "kube-system"
+  version    = "9.43.2"
+
+  set {
+    name  = "autoDiscovery.clusterName"
+    value = module.eks.cluster_name
+  }
+
+  set {
+    name  = "awsRegion"
+    value = var.aws_region
+  }
+
+  set {
+    name  = "rbac.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = module.eks.cluster_autoscaler_role_arn
+  }
+
+  set {
+    name  = "extraArgs.balance-similar-node-groups"
+    value = "true"
+  }
+
+  set {
+    name  = "extraArgs.skip-nodes-with-system-pods"
+    value = "false"
+  }
+
+  depends_on = [module.eks]
+}
+
 # metrics-server — required for HPA to read CPU/memory metrics
 resource "helm_release" "metrics_server" {
   name       = "metrics-server"
