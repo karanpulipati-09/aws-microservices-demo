@@ -216,3 +216,245 @@ EC2 → NAT Gateway → IGW → Internet → response back to EC2
 | Default Security Group | Every VPC gets one automatically |
 
 These are harmless — nothing uses them in our setup.
+
+---
+
+## EKS (Elastic Kubernetes Service)
+
+AWS-managed Kubernetes control plane. You pay for worker nodes — the master is free.
+
+```
+EKS Control Plane (AWS-managed)
+    ├── API server   ← kubectl talks here
+    ├── etcd         ← stores cluster state
+    └── scheduler    ← decides which node gets a pod
+
+EKS Node Group (your EC2s)
+    ├── node-1 (t3.small)
+    └── node-2 (t3.small)
+```
+
+- **Node Group** = Auto Scaling Group of EC2s — Terraform manages desired/min/max
+- **Authentication modes**: `API_AND_CONFIG_MAP` — supports both aws-auth ConfigMap and newer access entries API. Set at cluster creation — **immutable**, changing it forces destroy + recreate.
+- **Access entries** (`aws_eks_access_entry` + `aws_eks_access_policy_association`) — the modern way to grant IAM users/roles kubectl access without editing ConfigMap manually.
+
+---
+
+## IRSA (IAM Roles for Service Accounts)
+
+Lets a Kubernetes pod assume an AWS IAM role — no credentials stored in the cluster.
+
+```
+Pod SA annotated with role ARN
+    │
+    ▼
+EKS OIDC Provider issues a projected token for the SA
+    │
+    ▼
+AWS STS validates token → AssumeRoleWithWebIdentity
+    │
+    ▼
+Pod gets temporary IAM credentials (auto-rotated)
+```
+
+**Three parts you need:**
+1. **OIDC provider** — bridges EKS and AWS IAM trust (`aws_iam_openid_connect_provider`)
+2. **IAM role trust policy** — `StringEquals` condition scoped to exact `namespace:service-account`
+3. **SA annotation** — `eks.amazonaws.com/role-arn: <arn>` on the Kubernetes SA
+
+**Common gotcha**: trust policy SA name must exactly match what the pod actually uses. Helm charts often create SAs with different default names (e.g. `cluster-autoscaler-aws-cluster-autoscaler` vs `cluster-autoscaler`).
+
+---
+
+## EBS CSI Driver
+
+Allows EKS pods to use EBS volumes as PersistentVolumes.
+
+- Installed as an EKS **addon** (`aws_eks_addon`)
+- Needs IRSA — the controller pod calls EBS APIs to create/attach/detach volumes
+- **gp3** StorageClass — faster baseline throughput + IOPS than gp2, and cheaper
+- `WaitForFirstConsumer` binding mode — EBS volume created in the same AZ as the pod (EBS is AZ-scoped)
+
+```
+PVC created → StorageClass (gp3) → EBS CSI Driver → AWS creates EBS volume → attaches to node → mounted in pod
+```
+
+---
+
+## Helm
+
+Package manager for Kubernetes. A **chart** is a template for Kubernetes manifests.
+
+```
+helm install <release-name> <chart> -n <namespace> -f values.yaml
+helm upgrade <release-name> <chart> -n <namespace> --set image.tag=abc1234
+helm uninstall <release-name> -n <namespace>
+```
+
+- **Release** = a deployed instance of a chart (can install same chart multiple times with different names)
+- **Values** = inputs that parameterize the templates (`values.yaml` or `--set key=value`)
+- **`helm upgrade --install`** = idempotent — installs if not present, upgrades if already running
+
+**Templates** use Go templating:
+```yaml
+replicas: {{ .Values.replicaCount }}
+image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+{{- if .Values.hpa.enabled }}   # conditional block
+```
+
+---
+
+## HPA (Horizontal Pod Autoscaler)
+
+Automatically scales pod replicas based on CPU or memory.
+
+```
+metrics-server → reads CPU/memory from pods every 15s
+    │
+HPA controller polls metrics-server
+    │
+if avg CPU > target → scale up replicas
+if avg CPU < target for 5 min → scale down replicas
+```
+
+**Key design decision**: omit `replicas` from Deployment when HPA is enabled. If `replicas: 2` is in the Deployment, `helm upgrade` resets replica count to 2 on every deploy — fighting the HPA. With `replicas` omitted, HPA is the sole owner.
+
+```yaml
+# values.yaml
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+# deployment.yaml
+spec:
+  {{- if not .Values.hpa.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+```
+
+- API version: `autoscaling/v2` (supports multiple metrics)
+- Scale-up: immediate when threshold crossed
+- Scale-down: 5-minute cooldown (prevents flapping)
+
+---
+
+## Cluster Autoscaler
+
+Scales EC2 **nodes** (not pods). Works at the AWS ASG level.
+
+```
+Pod scheduled → no node has capacity → pod stays Pending
+    │
+Cluster Autoscaler sees Pending pod
+    │
+Calls AWS ASG SetDesiredCapacity +1
+    │
+New EC2 node boots, joins cluster (~2 min)
+    │
+Pending pod gets scheduled on new node
+```
+
+**Scale-down**: node underutilized for 10 min → drains pods → terminates EC2.
+
+**Setup requirements:**
+1. ASG auto-discovery tags on node group:
+   - `k8s.io/cluster-autoscaler/enabled=true`
+   - `k8s.io/cluster-autoscaler/<cluster-name>=owned`
+2. IRSA role with ASG permissions (`SetDesiredCapacity`, `TerminateInstanceInAutoScalingGroup`)
+3. Helm chart with `rbac.serviceAccount.name` matching the IRSA trust policy SA name
+
+---
+
+## RBAC (Role-Based Access Control)
+
+Controls what Kubernetes identities (users, SAs) can do inside the cluster.
+
+```
+Role          = what actions are allowed (in a namespace)
+ClusterRole   = same but cluster-wide
+RoleBinding   = binds a Role to a user/SA (in a namespace)
+ClusterRoleBinding = binds a ClusterRole cluster-wide
+```
+
+**Our setup** (in `dev` namespace):
+
+| Resource | Verbs | Who |
+|---|---|---|
+| `dev-readonly` Role | get, list, watch | `dev-readonly` SA |
+| `dev-admin` Role | `*` (everything) | `dev-admin` SA |
+
+**Principle of least privilege**: readonly SA can't create or delete anything. Admin SA is scoped to `dev` namespace only — can't touch `kube-system`.
+
+---
+
+## Prometheus + Grafana (kube-prometheus-stack)
+
+Single Helm chart installs the full monitoring stack:
+
+| Component | Purpose |
+|---|---|
+| Prometheus | Scrapes metrics from pods every 15s, stores time-series |
+| Grafana | Dashboards on top of Prometheus |
+| node-exporter | Per-node metrics (CPU, memory, disk) |
+| kube-state-metrics | Kubernetes object metrics (pod status, deployment replicas) |
+| Alertmanager | Routes alerts to Slack/PagerDuty (disabled in our setup to save memory) |
+
+**How Prometheus discovers targets**: `ServiceMonitor` CRDs — label-selects Services to scrape. Setting `serviceMonitorSelectorNilUsesHelmValues: false` lets it scrape all namespaces, not just ones with Helm labels.
+
+**Grafana access:**
+```bash
+kubectl port-forward svc/prometheus-grafana -n monitoring 3001:80
+# Login: admin / $(terraform output -raw grafana_admin_password)
+```
+
+---
+
+## Terraform — Advanced Concepts
+
+### `depends_on`
+Explicit dependency for relationships Terraform can't detect via variable references.
+```hcl
+resource "helm_release" "metrics_server" {
+  depends_on = [module.eks]  # EKS must be fully ready before Helm can talk to it
+}
+```
+Use when: provider connection depends on a resource being ready (EKS cluster, VPC endpoint).
+
+### `count` vs `for_each`
+
+| | `count` | `for_each` |
+|---|---|---|
+| Index | Number (`count.index`) | String key (map/set) |
+| Reference | `aws_subnet.public[0]` | `aws_subnet.public["us-east-1a"]` |
+| Risk | Remove middle item → all after it recreate | Remove any item → only that item destroyed |
+| Use when | Identical resources | Named/distinct resources |
+
+### `terraform workspace`
+Separate state files within one backend. Weak isolation — all workspaces share the same Terraform code.
+```bash
+terraform workspace new staging
+terraform workspace select prod
+```
+**Preferred in production**: separate state files per environment (separate S3 keys + separate backend configs). Workspaces share variables and code, making cross-environment drift hard to catch.
+
+### State file corruption
+- **Prevention**: S3 versioning + DynamoDB locking — only one person applies at a time
+- **Recovery**: `aws s3 cp s3://bucket/key.tfstate.backup terraform.tfstate` → `terraform state push`
+- **Never** edit state manually — use `terraform state mv`, `terraform state rm`, `terraform import`
+
+### `terraform taint` (deprecated)
+Replaced by `terraform apply -replace=<resource>`:
+```bash
+terraform apply -replace="aws_instance.web"
+```
+Forces destroy + recreate of a specific resource on next apply, without changing config.
+
+### Provider vs Provisioner
+
+| | Provider | Provisioner |
+|---|---|---|
+| What | Plugin connecting Terraform to a platform (AWS, k8s, Helm) | Script runner inside a resource (remote-exec, local-exec) |
+| When | Always — defines resource types | After resource creation — run commands on it |
+| Avoid? | No — essential | Yes — use `user_data` instead; provisioners break idempotency |
