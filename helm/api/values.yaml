@@ -21,6 +21,12 @@ resources:
     cpu: 200m
     memory: 256Mi
 
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
 livenessProbe:
   httpGet:
     path: /health

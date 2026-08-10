@@ -47,3 +47,9 @@ output "ecr_repository_urls" {
   description = "ECR repository URLs — used in GHA build-push workflow"
   value       = module.ecr.repository_urls
 }
+
+output "grafana_admin_password" {
+  description = "Grafana admin password — retrieve with: terraform output -raw grafana_admin_password"
+  value       = random_password.grafana.result
+  sensitive   = true
+}

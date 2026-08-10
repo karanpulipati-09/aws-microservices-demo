@@ -256,4 +256,50 @@ resource "kubernetes_role_binding" "dev_admin" {
   }
 }
 
+# metrics-server — required for HPA to read CPU/memory metrics
+resource "helm_release" "metrics_server" {
+  name       = "metrics-server"
+  repository = "https://kubernetes-sigs.github.io/metrics-server/"
+  chart      = "metrics-server"
+  namespace  = "kube-system"
+  version    = "3.12.1"
+
+  depends_on = [module.eks]
+}
+
+# Grafana admin password — generated, retrieve with: terraform output -raw grafana_admin_password
+resource "random_password" "grafana" {
+  length  = 16
+  special = false
+}
+
+# kube-prometheus-stack — Prometheus + Grafana in one chart
+resource "helm_release" "prometheus" {
+  name             = "prometheus"
+  repository       = "https://prometheus-community.github.io/helm-charts"
+  chart            = "kube-prometheus-stack"
+  namespace        = "monitoring"
+  create_namespace = true
+  version          = "61.3.2"
+
+  set {
+    name  = "grafana.adminPassword"
+    value = random_password.grafana.result
+  }
+
+  # disable alertmanager to reduce memory pressure on t3.small nodes
+  set {
+    name  = "alertmanager.enabled"
+    value = "false"
+  }
+
+  # scrape all namespaces, not just ones with helm labels
+  set {
+    name  = "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues"
+    value = "false"
+  }
+
+  depends_on = [module.eks]
+}
+
 # OIDC + IAM role live in bootstrap/ state — never destroyed with infra
