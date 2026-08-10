@@ -84,6 +84,12 @@ resource "aws_eks_node_group" "main" {
     max_size     = 3
   }
 
+  # Required tags for Cluster Autoscaler ASG auto-discovery
+  tags = {
+    "k8s.io/cluster-autoscaler/enabled"              = "true"
+    "k8s.io/cluster-autoscaler/${local.cluster_name}" = "owned"
+  }
+
   depends_on = [
     aws_iam_role_policy_attachment.eks_worker_node_policy,
     aws_iam_role_policy_attachment.eks_cni_policy,
@@ -160,6 +166,54 @@ resource "aws_eks_addon" "ebs_csi" {
     aws_eks_node_group.main,
     aws_iam_role_policy_attachment.ebs_csi,
   ]
+}
+
+# IRSA for Cluster Autoscaler
+data "aws_iam_policy_document" "cluster_autoscaler_assume_role" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:kube-system:cluster-autoscaler"]
+    }
+
+    principals {
+      identifiers = [aws_iam_openid_connect_provider.eks.arn]
+      type        = "Federated"
+    }
+  }
+}
+
+resource "aws_iam_role" "cluster_autoscaler" {
+  name               = "${local.cluster_name}-cluster-autoscaler-role"
+  assume_role_policy = data.aws_iam_policy_document.cluster_autoscaler_assume_role.json
+}
+
+resource "aws_iam_role_policy" "cluster_autoscaler" {
+  name = "${local.cluster_name}-cluster-autoscaler-policy"
+  role = aws_iam_role.cluster_autoscaler.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeAutoScalingInstances",
+        "autoscaling:DescribeLaunchConfigurations",
+        "autoscaling:DescribeScalingActivities",
+        "autoscaling:DescribeTags",
+        "autoscaling:SetDesiredCapacity",
+        "autoscaling:TerminateInstanceInAutoScalingGroup",
+        "ec2:DescribeLaunchTemplateVersions",
+        "ec2:DescribeInstanceTypes"
+      ]
+      Resource = "*"
+    }]
+  })
 }
 
 # Grant admin access to GitHub Actions IAM role for helm deployments
