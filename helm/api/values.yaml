@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: 259851212818.dkr.ecr.us-east-1.amazonaws.com/api
-  tag: "b63ddff"
+  tag: "7216d3d"
   pullPolicy: IfNotPresent
 
 service:
