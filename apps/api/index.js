@@ -10,7 +10,7 @@ const server = http.createServer((req, res) => {
 
   if (req.url === '/health' || req.url === '/api/health') {
     res.writeHead(200);
-    res.end(JSON.stringify({ status: 'ok', env: ENV, version: '1.0.0', sha: SHA }));
+    res.end(JSON.stringify({ status: 'ok', env: ENV, version: '1.0.1', sha: SHA, deployedBy: 'ArgoCD' }));
   } else {
     res.writeHead(404);
     res.end(JSON.stringify({ error: 'not found' }));
@@ -18,4 +18,4 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => console.log(`API running on port ${PORT} [${ENV}]`));
-// v1.0.4
+// v1.0.1
