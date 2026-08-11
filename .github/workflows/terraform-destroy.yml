@@ -64,6 +64,7 @@ jobs:
           terraform state rm helm_release.metrics_server || true
           terraform state rm helm_release.prometheus || true
           terraform state rm helm_release.cluster_autoscaler || true
+          terraform state rm helm_release.argocd || true
 
       - name: Terraform Destroy
         working-directory: terraform
