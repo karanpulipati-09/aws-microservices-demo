@@ -281,7 +281,7 @@
         <div class="logo-icon">☁️</div>
         <div>
           <h1>AWS Microservices Demo</h1>
-          <div class="subtitle">Portfolio project — Terraform + EKS + Helm</div>
+          <div class="subtitle">Portfolio project — Terraform + EKS + Helm + ArgoCD</div>
         </div>
       </div>
       <div class="author">
@@ -335,6 +335,9 @@
         <span class="tag">Amazon EKS</span>
         <span class="tag">Amazon ECR</span>
         <span class="tag">Helm</span>
+        <span class="tag">ArgoCD</span>
+        <span class="tag">Prometheus</span>
+        <span class="tag">Grafana</span>
         <span class="tag">nginx</span>
         <span class="tag">Node.js</span>
         <span class="tag">PostgreSQL</span>
@@ -359,6 +362,7 @@
         badge.className = 'api-value ok';
         const parts = [`status: ${d.status}`, `env: ${d.env}`, `version: ${d.version}`];
         if (d.sha) parts.push(`sha: ${d.sha}`);
+        if (d.deployedBy) parts.push(`deployedBy: ${d.deployedBy}`);
         detail.textContent = parts.join('  ·  ');
         if (d.env) envValue.textContent = d.env;
         if (d.sha) shaValue.textContent = d.sha;
