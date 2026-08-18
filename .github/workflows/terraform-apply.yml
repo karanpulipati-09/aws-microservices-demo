@@ -12,6 +12,11 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID || '259851212818' }}
+  GHA_ROLE_NAME: ${{ vars.GHA_ROLE_NAME || 'github-actions-terraform' }}
+
 jobs:
   apply:
     name: Terraform Apply
@@ -24,8 +29,8 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::259851212818:role/github-actions-terraform
-          aws-region: us-east-1
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/${{ env.GHA_ROLE_NAME }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

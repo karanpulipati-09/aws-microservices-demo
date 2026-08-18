@@ -4,6 +4,12 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "aws_account_id" {
+  description = "AWS account ID for the deployment."
+  type        = string
+  default     = "259851212818"
+}
+
 variable "project_name" {
   description = "Project name used for naming all resources"
   type        = string
@@ -14,6 +20,18 @@ variable "environment" {
   description = "Environment name (dev, staging, prod)"
   type        = string
   default     = "dev"
+}
+
+variable "admin_iam_name" {
+  description = "Local IAM user used for cluster admin access."
+  type        = string
+  default     = "terraform-learner"
+}
+
+variable "gha_role_name" {
+  description = "GitHub Actions IAM role used for CI/CD."
+  type        = string
+  default     = "github-actions-terraform"
 }
 
 variable "vpc_cidr" {
