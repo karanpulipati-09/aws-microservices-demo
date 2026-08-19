@@ -68,6 +68,16 @@ jobs:
         with:
           working_directory: terraform
 
+      - name: Checkov — IaC security scan
+        uses: bridgecrewio/checkov-action@v12
+        continue-on-error: true
+        with:
+          directory: terraform
+          framework: terraform
+          quiet: true
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+
       - name: Terraform Plan
         working-directory: terraform
         id: plan
