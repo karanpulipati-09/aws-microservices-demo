@@ -3,6 +3,8 @@
 Production-grade AWS infrastructure portfolio project built by **[Karan Pulipati](https://www.linkedin.com/in/karan-pulipati)**.  
 Demonstrates Terraform, EKS, Helm, and fully automated CI/CD from code push to live deployment.
 
+> This repository intentionally uses a hybrid AWS topology: a private EC2 + ALB + RDS foundation for ingress and data access, layered with an EKS cluster for containerized workloads, Helm deployment, autoscaling, and GitOps-style delivery. The architecture is designed to be explicit, not contradictory.
+
 ## Architecture
 
 ```

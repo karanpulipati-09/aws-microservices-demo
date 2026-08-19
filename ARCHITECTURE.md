@@ -2,7 +2,7 @@
 
 ## Overview
 
-A production-grade AWS architecture combining a classic 3-tier stack (ALB → EC2 → RDS) with a Kubernetes tier (EKS + Helm), provisioned entirely via Terraform modules and deployed through a fully automated GitHub Actions CI/CD pipeline using OIDC authentication. 75+ resources across networking, compute, storage, security, and observability.
+A production-grade AWS architecture combining a classic 3-tier foundation (ALB → EC2 → RDS) with a Kubernetes application tier (EKS + Helm), provisioned entirely via Terraform modules and deployed through a fully automated GitHub Actions CI/CD pipeline using OIDC authentication. This is intentionally a hybrid design: the VPC, ALB, EC2, and RDS provide the private network and data plane, while EKS hosts the containerized workloads, ingress routing, autoscaling, and observability stack.
 
 ---
 
