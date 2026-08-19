@@ -27,6 +27,9 @@ hpa:
   maxReplicas: 5
   targetCPUUtilizationPercentage: 70
 
+serviceAccount:
+  name: api-sa
+
 livenessProbe:
   httpGet:
     path: /health
