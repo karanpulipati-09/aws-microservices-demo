@@ -41,7 +41,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform
-        run: terraform init -migrate-state
+        run: terraform init
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v3
