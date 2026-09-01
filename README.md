@@ -48,6 +48,8 @@ Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 | ALB | Internet-facing load balancer in public subnets |
 | EC2 | App server running nginx in private subnet |
 | RDS MySQL 8.0 | Database in isolated DB subnet, not publicly accessible |
+
+**RDS backups & restore time:** Automated backups enabled with a 7-day retention. Typical restore time from a snapshot for this small demo DB is usually 5–30 minutes (depends on DB size and allocated I/O). For larger production databases plan for longer restore windows and validate restores in a staging account.
 | Secrets Manager | Auto-generated DB password stored securely |
 | EKS Cluster | Kubernetes cluster in private subnets (v1.32) |
 | EKS Node Group | 2x t3.small worker nodes with Auto Scaling (min 1, max 3) |

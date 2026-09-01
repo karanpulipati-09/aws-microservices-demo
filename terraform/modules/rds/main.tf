@@ -31,6 +31,17 @@ resource "aws_db_subnet_group" "main" {
   }
 }
 
+# KMS key for encrypting RDS storage and snapshots
+resource "aws_kms_key" "rds" {
+  description             = "KMS key for ${local.name_prefix} RDS encryption"
+  deletion_window_in_days = 30
+
+  tags = {
+    Name        = "${local.name_prefix}-rds-kms"
+    Environment = var.environment
+  }
+}
+
 resource "aws_db_instance" "main" {
   identifier        = "${local.name_prefix}-mysql"
   engine            = "mysql"
@@ -45,11 +56,19 @@ resource "aws_db_instance" "main" {
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
 
+  # Backups & encryption
+  backup_retention_period = 7
+  backup_window           = "03:00-04:00"
+  storage_encrypted       = true
+  kms_key_id              = aws_kms_key.rds.arn
+  copy_tags_to_snapshot   = true
+
   skip_final_snapshot = true
   publicly_accessible = false
 
   tags = {
-    Name        = "${local.name_prefix}-mysql"
-    Environment = var.environment
+    Name              = "${local.name_prefix}-mysql"
+    Environment       = var.environment
+    "weekly-snapshot" = "true"
   }
 }
