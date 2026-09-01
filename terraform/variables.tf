@@ -46,4 +46,15 @@ variable "instance_type" {
   default     = "t3.micro"
 }
 
+variable "alert_email" {
+  description = "Optional email address to subscribe to alarm SNS topic"
+  type        = string
+  default     = ""
+}
+
+variable "tfstate_bucket" {
+  description = "Terraform remote state bucket name to monitor for access"
+  type        = string
+  default     = "karan-tf-state-259851212818"
+}
 
