@@ -55,6 +55,5 @@ variable "alert_email" {
 variable "tfstate_bucket" {
   description = "Terraform remote state bucket name to monitor for access"
   type        = string
-  default     = "karan-tf-state-259851212818"
 }
 

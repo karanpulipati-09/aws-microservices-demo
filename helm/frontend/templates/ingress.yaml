@@ -10,7 +10,7 @@ metadata:
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/server-snippet: |
       add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
-      add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'" always;
+      add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline'" always;
     # Optionally tune timeouts and proxy headers
     nginx.ingress.kubernetes.io/proxy-body-size: "8m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"

@@ -14,6 +14,19 @@ resource "aws_sns_topic_subscription" "email" {
   endpoint  = var.alert_email
 }
 
+resource "aws_sns_topic_policy" "alarms" {
+  arn = aws_sns_topic.alerts.arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = { Service = "events.amazonaws.com" }
+      Action = "SNS:Publish"
+      Resource = aws_sns_topic.alerts.arn
+    }]
+  })
+}
+
 # ALB 5xx errors (aggregate) — adjust dimensions to target specific ALB/TargetGroup if needed
 resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   alarm_name          = "${local.name_prefix}-alb-5xx"
