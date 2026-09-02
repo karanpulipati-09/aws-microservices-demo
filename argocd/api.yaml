@@ -11,7 +11,7 @@ spec:
     path: helm/api
   destination:
     server: https://kubernetes.default.svc
-    namespace: api
+    namespace: dev
   syncPolicy:
     automated:
       prune: true

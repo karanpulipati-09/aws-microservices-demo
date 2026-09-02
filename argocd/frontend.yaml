@@ -11,7 +11,7 @@ spec:
     path: helm/frontend
   destination:
     server: https://kubernetes.default.svc
-    namespace: frontend
+    namespace: dev
   syncPolicy:
     automated:
       prune: true
