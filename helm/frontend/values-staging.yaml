@@ -7,3 +7,13 @@ resources:
   limits:
     cpu: 400m
     memory: 512Mi
+
+ingress:
+  enabled: true
+  # Replace with your staging host(s)
+  hosts:
+    - host: "staging.example.local"
+  tls:
+    - secretName: "frontend-tls"
+      hosts:
+        - "staging.example.local"

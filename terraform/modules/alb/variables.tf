@@ -32,3 +32,9 @@ variable "alb_security_group_id" {
   description = "ALB SG ID — created at root to avoid circular dep, passed in here"
   type        = string
 }
+
+variable "certificate_arn" {
+  description = "Optional ACM certificate ARN for HTTPS listener (leave empty to skip creating HTTPS listener)"
+  type        = string
+  default     = ""
+}
