@@ -40,7 +40,6 @@ jobs:
 
       - name: tflint — Terraform lint
         working-directory: terraform
-        continue-on-error: true
         run: |
           tflint --init
           tflint --no-color
