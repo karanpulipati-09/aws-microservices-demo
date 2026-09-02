@@ -57,21 +57,8 @@ resource "aws_cloudwatch_metric_alarm" "rds_replica_lag" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
-# EKS pod restart rate: recommend Prometheus alerts via kube-prometheus-stack.
-# Create a CloudWatch alarm placeholder for Container Insights if enabled.
-resource "aws_cloudwatch_metric_alarm" "eks_pod_restarts" {
-  alarm_name          = "${local.name_prefix}-eks-pod-restarts"
-  alarm_description   = "EKS pod restart rate (placeholder). Prefer Prometheus alerts."
-  namespace           = "ContainerInsights"
-  metric_name         = "PodRestartCount"
-  statistic           = "Sum"
-  period              = 300
-  evaluation_periods  = 1
-  threshold           = 2
-  comparison_operator = "GreaterThanThreshold"
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-}
+# EKS pod restart rate: handled by Prometheus alerts via kube-prometheus-stack.
+# (CloudWatch ContainerInsights not enabled in this stack to keep free-tier costs down)
 
 # CloudTrail to monitor terraform state S3 bucket (data events)
 resource "aws_cloudtrail" "tfstate_trail" {

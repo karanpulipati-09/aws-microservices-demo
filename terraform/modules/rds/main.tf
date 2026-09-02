@@ -2,8 +2,6 @@ locals {
   name_prefix = "${var.project_name}-${var.environment}"
 }
 
-data "aws_caller_identity" "current" {}
-
 resource "aws_security_group" "rds" {
   name        = "${local.name_prefix}-rds-sg"
   description = "Allow MySQL from EC2 only"
@@ -33,40 +31,6 @@ resource "aws_db_subnet_group" "main" {
   }
 }
 
-# KMS key for encrypting RDS storage and snapshots
-resource "aws_kms_key" "rds" {
-  description             = "KMS key for ${local.name_prefix} RDS encryption"
-  deletion_window_in_days = 30
-
-  tags = {
-    Name        = "${local.name_prefix}-rds-kms"
-    Environment = var.environment
-  }
-}
-
-resource "aws_kms_key_policy" "rds" {
-  key_id = aws_kms_key.rds.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid = "Enable IAM Root"
-        Effect = "Allow"
-        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
-        Action = "kms:*"
-        Resource = "*"
-      },
-      {
-        Sid = "Allow RDS Service"
-        Effect = "Allow"
-        Principal = { Service = "rds.amazonaws.com" }
-        Action = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
 resource "aws_db_instance" "main" {
   identifier        = "${local.name_prefix}-mysql"
   engine            = "mysql"
@@ -81,19 +45,17 @@ resource "aws_db_instance" "main" {
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
 
-  # Backups & encryption
+  # Backups & encryption (using AWS-managed KMS key - no extra cost)
   backup_retention_period = 7
   backup_window           = "03:00-04:00"
   storage_encrypted       = true
-  kms_key_id              = aws_kms_key.rds.arn
   copy_tags_to_snapshot   = true
 
   skip_final_snapshot = true
   publicly_accessible = false
 
   tags = {
-    Name              = "${local.name_prefix}-mysql"
-    Environment       = var.environment
-    "weekly-snapshot" = "true"
+    Name        = "${local.name_prefix}-mysql"
+    Environment = var.environment
   }
 }
