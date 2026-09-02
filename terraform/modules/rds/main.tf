@@ -46,7 +46,8 @@ resource "aws_db_instance" "main" {
   vpc_security_group_ids = [aws_security_group.rds.id]
 
   # Backups & encryption (using AWS-managed KMS key - no extra cost)
-  backup_retention_period = 7
+  # Free tier limits backup retention to 1 day max
+  backup_retention_period = 1
   backup_window           = "03:00-04:00"
   storage_encrypted       = true
   copy_tags_to_snapshot   = true
