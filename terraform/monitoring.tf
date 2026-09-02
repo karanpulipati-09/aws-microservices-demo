@@ -2,6 +2,8 @@ locals {
   name_prefix = "${var.project_name}-${var.environment}"
 }
 
+data "aws_caller_identity" "current" {}
+
 # SNS topic for alerts
 resource "aws_sns_topic" "alerts" {
   name = "${local.name_prefix}-alerts"
@@ -19,9 +21,9 @@ resource "aws_sns_topic_policy" "alarms" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect = "Allow"
+      Effect   = "Allow"
       Principal = { Service = "events.amazonaws.com" }
-      Action = "SNS:Publish"
+      Action   = "SNS:Publish"
       Resource = aws_sns_topic.alerts.arn
     }]
   })
@@ -63,23 +65,55 @@ resource "aws_cloudwatch_metric_alarm" "rds_replica_lag" {
 # CloudTrail to monitor terraform state S3 bucket (data events)
 resource "aws_cloudtrail" "tfstate_trail" {
   name                          = "${local.name_prefix}-tfstate-trail"
+  s3_bucket_name                = aws_s3_bucket.cloudtrail_logs.id
   is_multi_region_trail         = false
   include_global_service_events = false
   enable_logging                = true
-}
-
-resource "aws_cloudtrail_event_selector" "s3_data_events" {
-  trail_name = aws_cloudtrail.tfstate_trail.name
 
   event_selector {
     read_write_type           = "All"
     include_management_events = true
 
     data_resource {
-      type = "AWS::S3::Object"
+      type   = "AWS::S3::Object"
       values = ["arn:aws:s3:::${var.tfstate_bucket}/"]
     }
   }
+
+  depends_on = [aws_s3_bucket_policy.cloudtrail_logs]
+}
+
+# S3 bucket to store CloudTrail logs
+resource "aws_s3_bucket" "cloudtrail_logs" {
+  bucket        = "${local.name_prefix}-cloudtrail-logs"
+  force_destroy = true
+}
+
+resource "aws_s3_bucket_policy" "cloudtrail_logs" {
+  bucket = aws_s3_bucket.cloudtrail_logs.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AWSCloudTrailAclCheck"
+        Effect = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action   = "s3:GetBucketAcl"
+        Resource = aws_s3_bucket.cloudtrail_logs.arn
+      },
+      {
+        Sid    = "AWSCloudTrailWrite"
+        Effect = "Allow"
+        Principal = { Service = "cloudtrail.amazonaws.com" }
+        Action   = "s3:PutObject"
+        Resource = "${aws_s3_bucket.cloudtrail_logs.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+        Condition = {
+          StringEquals = { "s3:x-amz-acl" = "bucket-owner-full-control" }
+        }
+      }
+    ]
+  })
 }
 
 # Send CloudTrail notifications to SNS via CloudWatch Events (EventBridge)
@@ -87,12 +121,12 @@ resource "aws_cloudwatch_event_rule" "tfstate_s3_put" {
   name        = "${local.name_prefix}-tfstate-s3-put"
   description = "Capture PutObject/DeleteObject events on terraform state bucket"
   event_pattern = jsonencode({
-    "source": ["aws.s3"],
-    "detail-type": ["AWS API Call via CloudTrail"],
-    "detail": {
-      "eventSource": ["s3.amazonaws.com"],
-      "eventName": ["PutObject", "DeleteObject"] ,
-      "requestParameters": {"bucketName": [var.tfstate_bucket]}
+    "source"      = ["aws.s3"],
+    "detail-type" = ["AWS API Call via CloudTrail"],
+    "detail" = {
+      "eventSource" = ["s3.amazonaws.com"],
+      "eventName"   = ["PutObject", "DeleteObject"],
+      "requestParameters" = { "bucketName" = [var.tfstate_bucket] }
     }
   })
 }
@@ -101,11 +135,4 @@ resource "aws_cloudwatch_event_target" "notify_sns" {
   rule      = aws_cloudwatch_event_rule.tfstate_s3_put.name
   target_id = "sendToSNS"
   arn       = aws_sns_topic.alerts.arn
-}
-
-resource "aws_cloudwatch_event_permission" "allow_events" {
-  statement_id  = "AllowEventsToPutTargets"
-  action        = "events:PutEvents"
-  principal     = "events.amazonaws.com"
-  rule          = aws_cloudwatch_event_rule.tfstate_s3_put.name
 }
