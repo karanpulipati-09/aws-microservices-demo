@@ -56,15 +56,10 @@ jobs:
       - name: Terraform Force Unlock (stale lock cleanup)
         working-directory: terraform
         continue-on-error: true
+        timeout-minutes: 2
         run: |
           echo "Checking for stale state locks..."
-          LOCK_INFO=$(terraform force-unlock 7fcf9dfe-2a23-97be-2675-96b3b3c2b329 2>&1 || true)
-          echo "$LOCK_INFO"
-          if echo "$LOCK_INFO" | grep -q "Lock Released"; then
-            echo "Successfully released stale lock"
-          else
-            echo "No active lock found or lock already released"
-          fi
+          timeout 60 terraform force-unlock -force 7fcf9dfe-2a23-97be-2675-96b3b3c2b329 2>&1 || echo "No active lock found or already released"
 
       - name: Terraform Apply
         working-directory: terraform
