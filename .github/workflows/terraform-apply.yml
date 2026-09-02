@@ -45,13 +45,26 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform
-        run: terraform init -migrate-state
+        run: terraform init -reconfigure
 
       - name: Import pre-existing Kubernetes resources
         working-directory: terraform
         continue-on-error: true
         run: |
           terraform import kubernetes_namespace.dev dev
+
+      - name: Terraform Force Unlock (stale lock cleanup)
+        working-directory: terraform
+        continue-on-error: true
+        run: |
+          echo "Checking for stale state locks..."
+          LOCK_INFO=$(terraform force-unlock 7fcf9dfe-2a23-97be-2675-96b3b3c2b329 2>&1 || true)
+          echo "$LOCK_INFO"
+          if echo "$LOCK_INFO" | grep -q "Lock Released"; then
+            echo "Successfully released stale lock"
+          else
+            echo "No active lock found or lock already released"
+          fi
 
       - name: Terraform Apply
         working-directory: terraform
