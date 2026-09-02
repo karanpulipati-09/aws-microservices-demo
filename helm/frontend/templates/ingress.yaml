@@ -34,7 +34,7 @@ spec:
                 name: frontend-frontend
                 port:
                   number: 80
-  {{- if .Values.ingress.tls }}
+  {{- if and .Values.ingress .Values.ingress.tls }}
   tls:
     {{- range .Values.ingress.tls }}
     - hosts: {{ toYaml .hosts | nindent 6 }}
