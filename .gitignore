@@ -10,3 +10,5 @@ tfplan
 *.pem
 *.key
 terraform.tfvars.local
+terraform.tfvars
+bootstrap/terraform.tfvars
