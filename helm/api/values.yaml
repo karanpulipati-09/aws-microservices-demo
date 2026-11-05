@@ -28,7 +28,7 @@ hpa:
   targetCPUUtilizationPercentage: 70
 
 serviceAccount:
-  name: dev-admin
+  name: api-sa
 
 livenessProbe:
   httpGet:
@@ -43,3 +43,7 @@ readinessProbe:
     port: 3000
   initialDelaySeconds: 5
   periodSeconds: 5
+
+pdb:
+  enabled: true
+  minAvailable: 1
