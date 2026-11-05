@@ -182,6 +182,24 @@ resource "kubernetes_storage_class" "gp3" {
   depends_on = [module.eks]
 }
 
+# Least-privilege service accounts for the app pods (no Role bindings: they need no API access).
+# Replaces running the pods as dev-admin.
+resource "kubernetes_service_account" "api" {
+  metadata {
+    name      = "api-sa"
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+  automount_service_account_token = false
+}
+
+resource "kubernetes_service_account" "frontend" {
+  metadata {
+    name      = "frontend-sa"
+    namespace = kubernetes_namespace.dev.metadata[0].name
+  }
+  automount_service_account_token = false
+}
+
 # RBAC — dev-readonly: read-only access to dev namespace
 resource "kubernetes_service_account" "dev_readonly" {
   metadata {
