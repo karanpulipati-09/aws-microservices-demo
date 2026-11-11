@@ -119,6 +119,9 @@ module "rds" {
   db_subnet_ids         = module.vpc.database_subnet_ids
   ec2_security_group_id = aws_security_group.ec2.id
   db_password           = random_password.db.result
+
+  # EKS nodes (pods) must reach the database
+  extra_allowed_security_group_ids = [module.eks.cluster_security_group_id]
 }
 
 module "eks" {
@@ -412,4 +415,77 @@ resource "helm_release" "argocd_apps" {
   })]
 
   depends_on = [helm_release.argocd]
+}
+
+# App DB credentials as one JSON secret — synced into the cluster by External Secrets Operator
+resource "aws_secretsmanager_secret" "app_db" {
+  name                    = "${var.project_name}-${var.environment}-app-db"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "app_db" {
+  secret_id = aws_secretsmanager_secret.app_db.id
+  secret_string = jsonencode({
+    username = module.rds.db_username
+    password = random_password.db.result
+    host     = module.rds.db_address
+    port     = module.rds.db_port
+    dbname   = module.rds.db_name
+  })
+}
+
+# IRSA role for External Secrets Operator — read-only access to the app DB secret
+data "aws_iam_policy_document" "eso_assume_role" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(module.eks.oidc_provider_url, "https://", "")}:sub"
+      values   = ["system:serviceaccount:external-secrets:external-secrets"]
+    }
+
+    principals {
+      identifiers = [module.eks.oidc_provider_arn]
+      type        = "Federated"
+    }
+  }
+}
+
+resource "aws_iam_role" "eso" {
+  name               = "${var.project_name}-${var.environment}-external-secrets"
+  assume_role_policy = data.aws_iam_policy_document.eso_assume_role.json
+}
+
+resource "aws_iam_role_policy" "eso" {
+  name = "read-app-db-secret"
+  role = aws_iam_role.eso.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+      Resource = aws_secretsmanager_secret.app_db.arn
+    }]
+  })
+}
+
+# External Secrets Operator — syncs AWS Secrets Manager into Kubernetes Secrets
+resource "helm_release" "external_secrets" {
+  name             = "external-secrets"
+  repository       = "https://charts.external-secrets.io"
+  chart            = "external-secrets"
+  namespace        = "external-secrets"
+  create_namespace = true
+  version          = "1.3.2"
+  timeout          = 600
+
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = aws_iam_role.eso.arn
+  }
+
+  depends_on = [module.eks]
 }

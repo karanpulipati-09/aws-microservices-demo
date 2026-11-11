@@ -46,3 +46,9 @@ variable "instance_class" {
   type        = string
   default     = "db.t3.micro"
 }
+
+variable "extra_allowed_security_group_ids" {
+  description = "Additional SGs allowed to reach RDS on 3306 (e.g. EKS nodes). Pass a list; its length must be known at plan time."
+  type        = list(string)
+  default     = []
+}
