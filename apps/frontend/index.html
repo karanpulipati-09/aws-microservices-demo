@@ -263,6 +263,58 @@
       0%, 100% { opacity: 1; }
       50% { opacity: 0.4; }
     }
+
+    /* tasks */
+    .tasks {
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .tasks-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #475569;
+      margin-bottom: 14px;
+    }
+    .task-form { display: flex; gap: 8px; margin-bottom: 14px; }
+    .task-form input {
+      flex: 1;
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      border-radius: 8px;
+      color: #e2e8f0;
+      padding: 9px 12px;
+      font-size: 14px;
+    }
+    .task-form input:focus { outline: none; border-color: #3b82f6; }
+    .task-form button, .task-del {
+      background: #2563eb;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      padding: 9px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .task-form button:hover { background: #1d4ed8; }
+    .task-list { list-style: none; }
+    .task-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 0;
+      border-top: 1px solid #2d3148;
+      font-size: 14px;
+    }
+    .task-item span { flex: 1; word-break: break-word; }
+    .task-item.done span { color: #64748b; text-decoration: line-through; }
+    .task-del { background: transparent; color: #64748b; padding: 2px 8px; font-size: 16px; }
+    .task-del:hover { color: #f87171; }
+    .task-msg { font-size: 13px; color: #64748b; }
+    .task-msg.error { color: #f87171; }
   </style>
 </head>
 <body>
@@ -327,6 +379,16 @@
       <div class="api-detail" id="api-detail"></div>
     </div>
 
+    <div class="tasks">
+      <div class="tasks-title">Tasks &middot; stored in RDS MySQL</div>
+      <form class="task-form" id="task-form">
+        <input id="task-input" type="text" maxlength="255" placeholder="Add a task..." autocomplete="off" required>
+        <button type="submit">Add</button>
+      </form>
+      <div class="task-msg" id="task-msg"></div>
+      <ul class="task-list" id="task-list"></ul>
+    </div>
+
     <div class="stack">
       <div class="stack-title">Stack</div>
       <div class="stack-items">
@@ -340,7 +402,8 @@
         <span class="tag">Grafana</span>
         <span class="tag">nginx</span>
         <span class="tag">Node.js</span>
-        <span class="tag">PostgreSQL</span>
+        <span class="tag">MySQL (RDS)</span>
+        <span class="tag">External Secrets</span>
       </div>
     </div>
   </div>
@@ -372,6 +435,87 @@
         badge.className = 'api-value error';
         detail.textContent = 'GET /api/health — connection refused';
       });
+
+    // --- tasks (API -> MySQL on RDS) ---
+    const taskList = document.getElementById('task-list');
+    const taskMsg  = document.getElementById('task-msg');
+    const taskForm = document.getElementById('task-form');
+    const taskInput = document.getElementById('task-input');
+
+    function showMsg(text, isError) {
+      taskMsg.textContent = text || '';
+      taskMsg.className = 'task-msg' + (isError ? ' error' : '');
+    }
+
+    async function api(path, opts) {
+      const res = await fetch(path, opts);
+      if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+      return res.status === 204 ? null : res.json();
+    }
+
+    function renderTasks(tasks) {
+      taskList.replaceChildren();
+      if (!tasks.length) showMsg('No tasks yet. Add one above.');
+      else showMsg('');
+      for (const t of tasks) {
+        const li = document.createElement('li');
+        li.className = 'task-item' + (t.done ? ' done' : '');
+
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = !!t.done;
+        box.addEventListener('change', async () => {
+          try {
+            await api('/api/tasks/' + t.id, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ done: box.checked }),
+            });
+            loadTasks();
+          } catch (e) { showMsg('Could not update task: ' + e.message, true); }
+        });
+
+        const label = document.createElement('span');
+        label.textContent = t.title;   // textContent: user input is never parsed as HTML
+
+        const del = document.createElement('button');
+        del.className = 'task-del';
+        del.type = 'button';
+        del.title = 'Delete';
+        del.textContent = '×';
+        del.addEventListener('click', async () => {
+          try {
+            await api('/api/tasks/' + t.id, { method: 'DELETE' });
+            loadTasks();
+          } catch (e) { showMsg('Could not delete task: ' + e.message, true); }
+        });
+
+        li.append(box, label, del);
+        taskList.append(li);
+      }
+    }
+
+    async function loadTasks() {
+      try { renderTasks(await api('/api/tasks')); }
+      catch (e) { showMsg('Tasks unavailable: ' + e.message, true); }
+    }
+
+    taskForm.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const title = taskInput.value.trim();
+      if (!title) return;
+      try {
+        await api('/api/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title }),
+        });
+        taskInput.value = '';
+        loadTasks();
+      } catch (e) { showMsg('Could not add task: ' + e.message, true); }
+    });
+
+    loadTasks();
   </script>
 </body>
 </html>
