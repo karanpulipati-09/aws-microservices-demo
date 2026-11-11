@@ -340,6 +340,7 @@ resource "helm_release" "prometheus" {
   namespace        = "monitoring"
   create_namespace = true
   version          = "61.3.2"
+  timeout          = 900
 
   set {
     name  = "grafana.adminPassword"
