@@ -380,3 +380,36 @@ resource "helm_release" "argocd" {
 }
 
 # OIDC + IAM role live in bootstrap/ state — never destroyed with infra
+
+# ArgoCD Applications — bootstraps api/frontend so a fresh apply needs no manual kubectl step
+resource "helm_release" "argocd_apps" {
+  name       = "argocd-apps"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argocd-apps"
+  namespace  = "argocd"
+  version    = "2.0.2"
+
+  values = [yamlencode({
+    applications = {
+      for app in ["api", "frontend"] : app => {
+        namespace = "argocd"
+        project   = "default"
+        source = {
+          repoURL        = "https://github.com/karanpulipati-09/aws-microservices-demo"
+          targetRevision = "main"
+          path           = "helm/${app}"
+        }
+        destination = {
+          server    = "https://kubernetes.default.svc"
+          namespace = "dev"
+        }
+        syncPolicy = {
+          automated   = { prune = true, selfHeal = true }
+          syncOptions = ["CreateNamespace=true"]
+        }
+      }
+    }
+  })]
+
+  depends_on = [helm_release.argocd]
+}

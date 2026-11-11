@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - 'apps/**'
+  # Run after Terraform Apply so the ECR repos exist (fresh-stack rebuilds)
+  workflow_run:
+    workflows: ["Terraform Apply"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -20,6 +25,7 @@ jobs:
   build-push:
     name: Build and Push (${{ matrix.app }})
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
 
     strategy:
       matrix:
@@ -28,6 +34,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
@@ -40,7 +48,7 @@ jobs:
 
       - name: Get short SHA
         id: short-sha
-        run: echo "SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+        run: echo "SHA=$(echo ${{ github.event.workflow_run.head_sha || github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
 
       - name: Build Docker image
         run: |
