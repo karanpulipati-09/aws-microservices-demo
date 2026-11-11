@@ -1,0 +1,6 @@
+# Environment overrides for dev. ArgoCD layers this on top of values.yaml.
+env:
+  APP_ENV: dev
+
+externalSecret:
+  remoteKey: demo-dev-app-db

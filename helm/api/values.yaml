@@ -39,7 +39,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /health
+    path: /ready
     port: 3000
   initialDelaySeconds: 5
   periodSeconds: 5
@@ -47,3 +47,15 @@ readinessProbe:
 pdb:
   enabled: true
   minAvailable: 1
+
+externalSecret:
+  enabled: true
+  region: us-east-1
+  remoteKey: demo-dev-app-db
+  targetSecret: api-db
+
+migration:
+  enabled: true
+
+serviceMonitor:
+  enabled: true
