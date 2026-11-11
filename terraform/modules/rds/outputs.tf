@@ -12,3 +12,16 @@ output "security_group_id" {
   description = "RDS security group ID"
   value       = aws_security_group.rds.id
 }
+
+output "db_address" {
+  description = "RDS hostname without port"
+  value       = aws_db_instance.main.address
+}
+
+output "db_port" {
+  value = aws_db_instance.main.port
+}
+
+output "db_username" {
+  value = aws_db_instance.main.username
+}
