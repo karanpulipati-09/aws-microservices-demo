@@ -8,11 +8,11 @@ resource "aws_security_group" "rds" {
   vpc_id      = var.vpc_id
 
   ingress {
-    description     = "MySQL from EC2"
+    description     = "MySQL from EC2 and EKS nodes"
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-    security_groups = [var.ec2_security_group_id]
+    security_groups = concat([var.ec2_security_group_id], var.extra_allowed_security_group_ids)
   }
 
   tags = {
@@ -59,17 +59,4 @@ resource "aws_db_instance" "main" {
     Name        = "${local.name_prefix}-mysql"
     Environment = var.environment
   }
-}
-
-# Extra clients (EKS nodes). count, not for_each: the SG IDs are unknown until apply,
-# but the list length is known at plan time.
-resource "aws_vpc_security_group_ingress_rule" "extra" {
-  count = length(var.extra_allowed_security_group_ids)
-
-  security_group_id            = aws_security_group.rds.id
-  referenced_security_group_id = var.extra_allowed_security_group_ids[count.index]
-  from_port                    = 3306
-  to_port                      = 3306
-  ip_protocol                  = "tcp"
-  description                  = "MySQL from EKS nodes"
 }
