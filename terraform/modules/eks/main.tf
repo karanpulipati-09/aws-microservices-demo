@@ -78,10 +78,16 @@ resource "aws_eks_node_group" "main" {
 
   instance_types = ["t3.small"]
 
+  # t3.small fits ~11 pods per node (ENI limit), so add-ons fill 3 nodes quickly.
   scaling_config {
     desired_size = 2
     min_size     = 1
-    max_size     = 3
+    max_size     = 5
+  }
+
+  # The cluster autoscaler owns the node count; don't fight it on every apply.
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
   }
 
   # Required tags for Cluster Autoscaler ASG auto-discovery
