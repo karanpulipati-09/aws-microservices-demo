@@ -177,7 +177,7 @@ deploy.yml (CD)
     │
     ▼
 ArgoCD detects the change and syncs the cluster
-  → sync waves: SecretStore → ExternalSecret → migration Job → Deployment
+  → sync waves: SecretStore → ExternalSecret → migration Job → Deployment → HPA
 
 terraform/** PR
     │
@@ -312,7 +312,25 @@ EKS cluster created by GHA role
 | External Secrets pod Pending, Helm timed out | t3.small holds ~11 pods; 3 nodes were full and the autoscaler max was 3 | Node group `max_size = 5`; `ignore_changes` on `desired_size` so the autoscaler owns node count |
 | Pods could not reach RDS | Standalone `aws_vpc_security_group_ingress_rule` was stripped by the SG's authoritative inline `ingress` block | One inline rule with both source SGs (`concat([ec2_sg], extra_sgs)`) |
 | Frontend showed "API unreachable" via port-forward | Port-forwarding the frontend pod bypasses ingress; only ingress routes `/api` to the API | Use the load balancer URL (or port-forward `ingress-nginx-controller`) |
-| `terraform destroy` hung on the External Secrets release | An `ExternalSecret` finalizer needs the controller, which Terraform removed first | Clear the finalizer, force-delete the controller pods, re-run destroy (proper fix: destroy ordering) |
+| `terraform destroy` hung on the External Secrets release | An `ExternalSecret` finalizer needs the controller, which Terraform removed first | ArgoCD cascade finalizer on the Applications plus `depends_on` so they are destroyed first; and the release is now state-rm'd in the destroy workflow |
+| API never deployed on a fresh install (Application stuck, retries exhausted) | Sync-wave deadlock: the HPA (wave 0) is Unhealthy until its target Deployment (wave 1) exists, and ArgoCD waits for wave 0 to be Healthy | HPA moved to sync-wave 2, after the Deployment |
+| First sync failed: ExternalSecret "Secret does not exist", migration hook failed | The Secrets Manager secret is created only after RDS (~10 min), but ArgoCD synced immediately | `argocd_apps` depends on `aws_secretsmanager_secret_version.app_db` |
+| Destroy timed out; Helm uninstalls hung; subnets/IGW `DependencyViolation` | Terraform destroyed the NAT gateway in parallel with in-cluster teardown (the graph had no edge from EKS to NAT/routes); nodes went `NotReady`, pods could not terminate, and the orphaned ingress load balancer blocked the subnets | `module "eks"` has `depends_on = [module.vpc]`, so the NAT outlives the cluster |
+| Destroy hung on releases added after the state-rm list was written | The destroy workflow skips Helm-uninstalling in-cluster releases via `terraform state rm`; `external_secrets` and `argocd_apps` were missing from that list | Added to the list (new in-cluster releases must be added too) |
+
+---
+
+## Teardown Design
+
+`terraform-destroy.yml` is deliberately not a graceful in-cluster teardown:
+1. `kubectl delete -f k8s/` removes the policy/RBAC manifests (best effort).
+2. A `terraform state rm` step drops the in-cluster Helm releases and Kubernetes objects from state, so Terraform does not try to uninstall them one by one; deleting the EKS cluster removes them.
+3. `terraform destroy` then removes everything else. `ingress-nginx` is still uninstalled so its ELB goes before the subnets.
+
+Ordering rules that keep it reliable:
+- `module "eks"` depends on `module.vpc`: the NAT gateway and route tables must outlive the cluster, because nodes reach the EKS control plane through the NAT. Without the edge, Terraform deletes the NAT in parallel, nodes go `NotReady`, and any Helm uninstall waits until its timeout.
+- New in-cluster Helm releases must be added to the state-rm list in the workflow.
+- `argocd_apps` carries ArgoCD's cascade finalizer and depends on the controllers its resources need (External Secrets, Prometheus CRDs, ingress-nginx), so a graceful destroy removes the Applications first.
 
 ---
 
