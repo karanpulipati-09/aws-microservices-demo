@@ -426,6 +426,9 @@ resource "helm_release" "argocd_apps" {
     helm_release.external_secrets,
     helm_release.prometheus,
     helm_release.ingress_nginx,
+    # The ExternalSecret needs this secret (created once RDS is up, ~10 min). Without it ArgoCD
+    # syncs early, the migration hook fails, and the 5 sync retries can run out.
+    aws_secretsmanager_secret_version.app_db,
   ]
 }
 
