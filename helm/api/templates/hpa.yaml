@@ -6,6 +6,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "api.labels" . | nindent 4 }}
+  annotations:
+    # After the Deployment (wave 1): an HPA is only Healthy once its target exists,
+    # and ArgoCD waits for each wave to be Healthy before starting the next.
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
