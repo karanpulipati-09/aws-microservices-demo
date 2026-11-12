@@ -9,34 +9,32 @@ Demonstrates Terraform, EKS, Helm, and fully automated CI/CD from code push to l
 
 ```
 Internet
-    ↓ HTTP port 80
-nginx Ingress  ← single ELB entry point
+    ↓ HTTPS (self-signed cert on the ingress ELB)
+ingress-nginx  ← single ELB entry point
     ├── /api/* → api service (ClusterIP :3000)
-    └── /*     → frontend service (ClusterIP :80)
+    └── /*     → frontend service (ClusterIP :80 → pod :8080)
 
-EKS Cluster (private subnets — 2x t3.small nodes, v1.32, autoscales to 3)
-    ├── frontend pod   ← nginx serving HTML/JS (ECR image, HPA: 2–5 replicas)
-    ├── api pod        ← Node.js REST API (ECR image, HPA: 2–5 replicas)
-    └── postgres pod   ← PostgreSQL 18 (Bitnami chart, gp3 EBS persistence enabled)
-    ├── metrics-server ← provides CPU/memory metrics to HPA
-    ├── Prometheus     ← scrapes all workloads
-    ├── Grafana        ← dashboards (kube-prometheus-stack)
-    └── Cluster Autoscaler ← scales node group 1→3 when pods are Pending
+EKS Cluster (private subnets — t3.small nodes, v1.32, Cluster Autoscaler 1→5)
+    ├── frontend pods   ← nginx-unprivileged serving the task UI (HPA 2–5)
+    ├── api pods        ← Node.js tasks API (HPA 2–5) ──► RDS MySQL (port 3306)
+    ├── ArgoCD          ← installed by Terraform; watches this repo (GitOps)
+    ├── External Secrets Operator ← syncs AWS Secrets Manager → Kubernetes Secret (IRSA)
+    ├── metrics-server  ← CPU/memory metrics for HPA
+    ├── Prometheus + Grafana ← kube-prometheus-stack; "Tasks API Overview" dashboard
+    └── Cluster Autoscaler ← adds nodes when pods are Pending
 
-ECR (Elastic Container Registry)
-    ├── frontend  ← nginx:alpine image
-    └── api       ← Node.js REST API
+ECR (frontend, api)  ← images tagged with the short git SHA
 
-ALB  (public subnets — us-east-1a, us-east-1b)
-    ↓ HTTP port 80
-EC2  (private subnet)  ← nginx
-    ↓ MySQL port 3306
-RDS  (DB subnet)  ← MySQL 8.0 (isolated, not publicly accessible)
+ALB  (public subnets) → EC2 (private, nginx) → RDS   ← the classic 3-tier foundation
+RDS  (DB subnets)    ← MySQL 8.0, isolated, encrypted, reachable from EC2 and EKS nodes only
 
 EC2/nodes → NAT Gateway → Internet (package installs, image pulls)
-Password flow: random_password → Secrets Manager → RDS (never hardcoded)
+Secrets: random_password → Secrets Manager (JSON: host, port, user, password, dbname)
+         → External Secrets Operator → Secret "api-db" → API pod env vars (never in Git)
 ```
 
+### The application
+A small **tasks API** (`/api/tasks`: create, list, update, delete) backed by RDS MySQL, with a task-list UI in the frontend. A migration Job creates the schema on every sync, before the API rolls out.
 
 ## Infrastructure
 
@@ -50,7 +48,7 @@ Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 | RDS MySQL 8.0 | Database in isolated DB subnet, encrypted at rest, 1-day backup retention (free tier compliant) |
 | Secrets Manager | Auto-generated DB password stored securely |
 | EKS Cluster | Kubernetes cluster in private subnets (v1.32) |
-| EKS Node Group | 2x t3.small worker nodes with Auto Scaling (min 1, max 3) |
+| EKS Node Group | t3.small worker nodes (min 1, max 5); the Cluster Autoscaler owns the node count (`desired_size` is ignored in Terraform) |
 | EKS OIDC Provider | Enables IRSA — pods assume IAM roles via service accounts |
 | EBS CSI Driver | EKS addon for EBS-backed PersistentVolumes (IRSA-secured) |
 | gp3 StorageClass | Default storage class for PVCs — faster and cheaper than gp2 |
@@ -58,10 +56,13 @@ Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 | RBAC | `dev-admin` + `dev-readonly` roles in `dev` namespace |
 | HPA | Horizontal Pod Autoscaler on frontend + api (min 2, max 5, CPU target 70%) |
 | metrics-server | Provides CPU/memory metrics for HPA |
-| Cluster Autoscaler | Scales node group 1→3 based on Pending pods (IRSA-secured) |
+| Cluster Autoscaler | Scales the node group (1→5) based on Pending pods (IRSA-secured) |
 | kube-prometheus-stack | Prometheus + Grafana — cluster-wide observability |
 | ECR | Private container registry — `frontend` + `api` repos |
-| S3 + DynamoDB | Terraform remote state + state locking |
+| ArgoCD | GitOps controller, installed by Terraform; the `api` and `frontend` Applications are also created by Terraform (`argocd-apps` chart) |
+| External Secrets Operator | Syncs the app DB credentials from Secrets Manager into a Kubernetes Secret via an IRSA role scoped to that one secret |
+| App DB secret | `demo-dev-app-db` — JSON with host, port, username, password, dbname |
+| S3 | Terraform remote state with native S3 locking (`use_lockfile`) |
 | CloudWatch Alarms | ALB 5xx, RDS replica lag, sent via SNS |
 | CloudTrail | Audit logging for S3 data events on state bucket |
 | EventBridge | Routes state bucket events to SNS topic |
@@ -70,9 +71,12 @@ Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 
 - EC2 in **private subnet** — not directly reachable from internet
 - EC2 SG allows port 80 **only from ALB SG**
-- RDS SG allows port 3306 **only from EC2 SG**
+- RDS SG allows port 3306 **only from the EC2 SG and the EKS cluster SG** (one inline rule; see Issues in ARCHITECTURE.md)
 - DB subnet has **no internet route** — RDS completely isolated
 - DB password **auto-generated** by Terraform, stored in Secrets Manager
+- App credentials reach pods through **External Secrets (IRSA, read-only on one secret)** — nothing sensitive in Git or Helm values
+- Pods run **non-root** (`runAsNonRoot`, seccomp `RuntimeDefault`, all capabilities dropped, no privilege escalation) with a PodDisruptionBudget per service
+- NetworkPolicy manifests exist in `k8s/` but are **not enforced** until the VPC CNI network policy agent is enabled
 - `publicly_accessible = false` on RDS — double protection
 - EKS nodes in **private subnets** — only reachable via kubectl through IAM
 - No SSH keys — access via AWS Systems Manager (SSM) if needed
@@ -105,95 +109,87 @@ Password flow: random_password → Secrets Manager → RDS (never hardcoded)
 
 ## Kubernetes + Helm
 
-Charts in `helm/`:
+Charts in `helm/`, deployed by **ArgoCD** (automated sync, prune, self-heal):
 
-| Chart | Service | Port | Replicas | Strategy |
-|---|---|---|---|---|
-| `helm/frontend` | ClusterIP | 80 | HPA: 2–5 (CPU 70%) | RollingUpdate maxSurge:1 maxUnavailable:1 |
-| `helm/api` | ClusterIP | 3000 | HPA: 2–5 (CPU 70%) | RollingUpdate maxSurge:1 maxUnavailable:1 |
-| `bitnami/postgresql` | ClusterIP | 5432 | 1 | — |
+| Chart | Service | Replicas | Also contains |
+|---|---|---|---|
+| `helm/frontend` | ClusterIP 80 → pod 8080 | HPA: 2–5 (CPU 70%) | Ingress, PDB |
+| `helm/api` | ClusterIP 3000 | HPA: 2–5 (CPU 70%) | SecretStore + ExternalSecret, migration Job, ServiceMonitor, Grafana dashboard ConfigMap, PDB |
 
-**HPA behaviour**: `replicas` field is omitted from Deployment when HPA is enabled — HPA is sole owner of replica count. `helm upgrade` never fights the autoscaler.
+**Sync order (API)** via ArgoCD sync waves: SecretStore (-2) → ExternalSecret (-1) → migration Job (0, Sync hook) → Deployment (1). The Job needs the Secret; the Deployment needs the schema.
 
-**Cluster Autoscaler**: watches for Pending pods (nodes full) → calls AWS ASG API → new node joins in ~2 min → pod scheduled. Scales down after 10 min of underutilization.
+**HPA behaviour**: the `replicas` field is omitted from the Deployment when the HPA is enabled, so the HPA owns the replica count and neither `helm upgrade` nor ArgoCD self-heal fights it.
 
-**Monitoring** (`kube-prometheus-stack`):
-```bash
-# Grafana password
-terraform -chdir=terraform output -raw grafana_admin_password
+**Cluster Autoscaler**: watches for Pending pods (nodes full, a t3.small fits ~11 pods) → calls the AWS ASG API → a new node joins in ~2 min. Scales down after ~10 min of underutilization.
 
-# Port-forward (use 3001 if 3000 is taken by another cluster)
-kubectl port-forward svc/prometheus-grafana -n monitoring 3001:80
-```
-
-**Ingress** (nginx controller) routes all traffic through a single ELB:
-- `/api/*` → api service
-- `/*` → frontend service
-
+**Monitoring** (`kube-prometheus-stack`): the API exposes `/metrics` (prom-client); a `ServiceMonitor` makes Prometheus scrape it, and the **Tasks API Overview** dashboard (12 panels) loads automatically through the Grafana sidecar (ConfigMap label `grafana_dashboard=1`).
 ```bash
 aws eks update-kubeconfig --region us-east-1 --name demo-dev-eks
 
-# Install (first time)
-helm install frontend ./helm/frontend -n dev
-helm install api ./helm/api -n dev
-helm install postgres bitnami/postgresql -n dev --set primary.persistence.enabled=false
+# Grafana password, then port-forward (UI at http://localhost:3000, dashboard uid: api-overview)
+terraform -chdir=terraform output -raw grafana_admin_password
+kubectl port-forward svc/prometheus-grafana -n monitoring 3000:80
 
-kubectl get ingress -n dev  # get ELB URL
+# ArgoCD UI at https://localhost:8080
+kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d
+kubectl port-forward svc/argocd-server -n argocd 8080:443
 ```
 
-**Per-environment deploy** (same chart, different values):
-```bash
-helm install frontend ./helm/frontend -n staging -f helm/frontend/values-staging.yaml
-helm install frontend ./helm/frontend -n prod    -f helm/frontend/values-prod.yaml
-```
+**Ingress** (ingress-nginx) routes everything through one ELB: `/api/*` → api, everything else → frontend. The ELB serves a self-signed certificate (browser warning); production would use a domain with cert-manager or ACM.
 
-> **Teardown note**: Delete Ingress before destroying infra — `helm uninstall ingress-nginx -n ingress-nginx` — otherwise the ELB blocks VPC subnet deletion.
+**Per-environment values** live next to each chart (`values-dev.yaml`, `values-staging.yaml`, `values-prod.yaml`). Only `dev` is deployed today.
 
 ## Applications
 
-| App | Source | ECR Repo | Port |
+| App | Source | ECR Repo | Container port |
 |---|---|---|---|
-| frontend | `apps/frontend/` | `frontend` | 80 |
-| api | `apps/api/` | `api` | 3000 |
+| frontend | `apps/frontend/` | `frontend` | 8080 (nginx-unprivileged) |
+| api | `apps/api/` | `api` | 3000 (Node.js 20, Express, mysql2, prom-client) |
 
-The API exposes `/health` → `{ status: "ok", env: "dev", version: "1.0.0", sha: "<image-tag>" }`.
+API endpoints:
 
-Images are tagged with the short git SHA (7 chars) — e.g. `9b04499`. No `latest` tag.
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health` | Liveness — no database call, returns `{ status, env, version, sha, deployedBy }` |
+| `GET /api/ready` | Readiness — checks the database (503 if unreachable) |
+| `GET /api/tasks`, `POST /api/tasks` | List / create tasks |
+| `PATCH /api/tasks/:id`, `DELETE /api/tasks/:id` | Mark done / delete |
+| `GET /metrics` | Prometheus metrics (request duration histogram + Node.js defaults) |
+
+Images are tagged with the short git SHA (7 chars). No `latest` tag.
 
 ## CI/CD
 
-Fully automated pipeline — code push to live deployment with no manual steps.
+GitOps: CI builds the image, CD records the new tag **in Git**, ArgoCD pulls the change into the cluster. No pipeline runs `helm upgrade` against the cluster.
 
 ```
-apps/** push                         helm/** push
-      ↓                                    ↓
-CI — Build and Push              CD — Deploy to Dev
-  build frontend (parallel)   ←──────────────────────
-  build api      (parallel)        reads tag from values.yaml
-  trivy scan
-  push to ECR
-      ↓ on success (workflow_run)
-CD — Deploy to Dev
-  helm upgrade frontend
-  helm upgrade api
-  kubectl rollout status  ← fails workflow if pods don't come up
+apps/** push ─► CI — Build and Push   (build both images, Trivy scan, push to ECR, tag = short SHA)
+                    │ workflow_run (success)
+                    ▼
+                CD — Deploy to Dev     (bumps the tag in helm/*/values.yaml, commits to main [skip ci])
+                    │
+                    ▼
+                ArgoCD sees the Git change and syncs the cluster
+
+terraform/** PR ─────► Terraform Plan
+terraform/** push ───► Terraform Apply ─(workflow_run)─► CI ─► CD ─► ArgoCD
 ```
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci-build-push.yml` (CI) | Push to `main` — `apps/**` | Builds frontend + api in parallel, Trivy scan, pushes to ECR |
-| `deploy.yml` (CD) | `workflow_run` on CI success OR push to `helm/**` | `helm upgrade` both charts, verifies rollout |
-| `terraform-plan.yml` | Pull Request to `main` — `terraform/**` | gitleaks (secrets) + tflint + tfsec + infracost cost delta, runs terraform plan, posts result as PR comment |
-| `terraform-apply.yml` | Push to `main` — `terraform/**` | Runs terraform apply automatically |
-| `terraform-destroy.yml` | Manual (`workflow_dispatch`) | Destroys all resources via GitHub UI button |
+| `build-push.yml` (CI) | Push to `main` on `apps/**`, after a successful Terraform Apply, or manual | Builds frontend + api in parallel, Trivy scan, pushes to ECR |
+| `deploy.yml` (CD) | `workflow_run` on CI success, or manual | Updates the image tag in the Helm values and pushes the commit |
+| `terraform-plan.yml` | Pull request touching `terraform/**` | gitleaks, tflint, tfsec, Checkov, Infracost, `terraform plan` posted on the PR |
+| `terraform-apply.yml` | Push to `main` on `terraform/**`, or manual | `terraform apply -auto-approve` (no approval gate yet) |
+| `terraform-destroy.yml` | Manual (`workflow_dispatch`) | Destroys all resources from the Actions UI |
+
+**CI after Apply**: CI also runs when Terraform Apply succeeds, so the ECR repositories exist before the first image push on a fresh stack.
 
 **Authentication**: OIDC — no AWS access keys stored in GitHub.
 
-**Bootstrap separation**: OIDC provider + IAM role live in `bootstrap/` with a separate Terraform state. Running `terraform destroy` on main infra never touches them.
+**Bootstrap separation**: the OIDC provider and IAM role live in `bootstrap/` with a separate Terraform state, so destroying the main stack never touches them.
 
-**Image tagging**: Short 7-char git SHA only (e.g. `9b04499`). Every deployment is pinned to an exact commit — full traceability and easy rollback.
-
-**Rolling updates**: `maxSurge: 1, maxUnavailable: 1` — zero-downtime deploys. New pod created first, old pod killed after readiness probe passes.
+**Image tagging**: short 7-char git SHA only, so each deployment is pinned to an exact commit (easy rollback).
 
 ## Terraform State
 
@@ -202,38 +198,11 @@ CD — Deploy to Dev
 | `bootstrap/terraform.tfstate` | OIDC provider + GHA IAM role — **never destroyed** |
 | `terraform/terraform.tfstate` | All infra (VPC, EKS, ECR, RDS, etc.) — freely destroyable |
 
-## Resources created
+## Rebuild and teardown
 
-| Resource | Count |
-|---|---|
-| VPC | 1 |
-| Internet Gateway | 1 |
-| Elastic IP | 1 |
-| NAT Gateway | 1 |
-| Subnets (public + private + DB) | 6 |
-| Route tables + associations | 9 |
-| Security groups + rules | 7 |
-| EC2 instance | 1 |
-| ALB + target group + listener + attachment | 4 |
-| Random password + Secrets Manager | 3 |
-| RDS DB subnet group + RDS instance | 2 |
-| EKS cluster + node group | 2 |
-| EKS IAM roles + policy attachments | 5 |
-| EKS access entries + policy associations (admin + GHA) | 4 |
-| EKS OIDC provider | 1 |
-| EBS CSI IAM role + policy attachment + addon | 3 |
-| ingress-nginx helm release | 1 |
-| gp3 StorageClass | 1 |
-| dev namespace | 1 |
-| RBAC (roles + bindings + service accounts) | 6 |
-| HPA (frontend + api) | 2 |
-| metrics-server helm release | 1 |
-| kube-prometheus-stack + Grafana password | 2 |
-| Cluster Autoscaler helm release + IAM role + policy | 3 |
-| ECR repos + lifecycle policies | 4 |
-| OIDC provider + GHA IAM role + policy (bootstrap) | 3 |
-| CloudWatch alarms (ALB 5xx, RDS replica lag) | 2 |
-| SNS topic + email subscription + policy | 3 |
-| CloudTrail trail + S3 bucket + bucket policy | 3 |
-| EventBridge rule + target | 2 |
-| **Total** | **85** |
+**Rebuild** (about 15–20 minutes): run *Terraform Apply* (merge a change under `terraform/` or use *Run workflow*). Terraform creates the network, EKS, RDS, ECR, ArgoCD and the ArgoCD Applications. CI then builds and pushes the images, CD bumps the tag, and ArgoCD syncs. No manual `kubectl` step is needed.
+
+**Teardown**: run the *Terraform Destroy* workflow. Known issue: the External Secrets controller can be removed before the `ExternalSecret` it manages, and the object's finalizer then blocks the uninstall until Helm times out. Workaround: `kubectl patch externalsecret api-api-db -n dev --type=merge -p '{"metadata":{"finalizers":null}}'`, force-delete the pods in `external-secrets`, then re-run the destroy.
+
+**Cost**: a running stack burned roughly **$0.50/hour** of credits in practice (EKS control plane, 3–4 t3.small nodes, NAT gateway, RDS, load balancer, plus data transfer). Destroy it after each session.
+
