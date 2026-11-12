@@ -70,6 +70,10 @@ jobs:
           terraform state rm helm_release.prometheus || true
           terraform state rm helm_release.cluster_autoscaler || true
           terraform state rm helm_release.argocd || true
+          terraform state rm helm_release.argocd_apps || true
+          terraform state rm helm_release.external_secrets || true
+          terraform state rm kubernetes_service_account.api || true
+          terraform state rm kubernetes_service_account.frontend || true
 
       - name: Terraform Destroy
         working-directory: terraform
