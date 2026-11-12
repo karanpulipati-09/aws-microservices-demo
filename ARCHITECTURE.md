@@ -20,20 +20,21 @@ Internet
     ▼
 [RDS MySQL 8.0] ← DB subnets (isolated, no internet)
     │
-[Secrets Manager] ← stores DB password (random_password, never hardcoded)
+[Secrets Manager] ← DB password + app credentials JSON (random_password, never hardcoded)
 
-[EKS Cluster] ← private subnets, 2x t3.small worker nodes (autoscales to 3)
+[EKS Cluster] ← private subnets, t3.small worker nodes (Cluster Autoscaler 1→5)
     ├── ingress-nginx     ← single ELB entry point, routes /api/* and /*
     ├── frontend          ← nginx (ECR), HPA: 2–5 replicas, CPU target 70%
-    ├── api               ← Node.js (ECR), HPA: 2–5 replicas, CPU target 70%
-    ├── postgres          ← Bitnami chart, gp3 EBS PVC
+    ├── api               ← Node.js tasks API (ECR), HPA: 2–5, talks to RDS MySQL
+    ├── argocd            ← GitOps controller + api/frontend Applications (Terraform)
+    ├── external-secrets  ← Secrets Manager → Kubernetes Secret (IRSA)
     ├── metrics-server    ← provides CPU/memory metrics for HPA
     ├── Prometheus        ← scrapes all workloads
     ├── Grafana           ← dashboards (kube-prometheus-stack)
-    └── Cluster Autoscaler ← scales node group 1→3 when pods are Pending
+    └── Cluster Autoscaler ← scales the node group (1→5) when pods are Pending
 
 [ECR] ← frontend + api images (tagged by short git SHA, scan_on_push enabled)
-[S3 + DynamoDB] ← Terraform remote state + locking
+[S3] ← Terraform remote state (native S3 locking, use_lockfile)
 
 [Monitoring]
     ├── CloudWatch Alarms  → ALB 5xx errors, RDS replica lag
@@ -106,8 +107,7 @@ Helm charts in `helm/`:
 | Chart | Service | Port | Replicas | Strategy |
 |---|---|---|---|---|
 | `helm/frontend` | ClusterIP | 80 | HPA: 2–5 (CPU 70%) | RollingUpdate maxSurge:1 maxUnavailable:1 |
-| `helm/api` | ClusterIP | 3000 | HPA: 2–5 (CPU 70%) | RollingUpdate maxSurge:1 maxUnavailable:1 |
-| `bitnami/postgresql` | ClusterIP | 5432 | 1 | — |
+| `helm/api` (+ ExternalSecret, migration Job, ServiceMonitor, dashboard) | ClusterIP | 3000 | HPA: 2–5 (CPU 70%) | RollingUpdate maxSurge:1 maxUnavailable:1 |
 
 **HPA ownership**: `replicas` field is omitted from Deployment when `hpa.enabled = true` — HPA is sole controller of replica count. Without this, `helm upgrade` resets replicas to the values.yaml default on every deploy.
 
@@ -159,47 +159,50 @@ Alertmanager disabled to reduce memory pressure on t3.small nodes.
 
 ## CI/CD Pipeline
 
+GitOps: CI builds, CD records the new image tag in Git, ArgoCD pulls it into the cluster.
+
 ```
 apps/** push
     │
     ▼
-ci-build-push.yml
+build-push.yml (CI)
   → build frontend + api in parallel
   → Trivy vulnerability scan
   → push to ECR (tagged with short git SHA)
     │ on success (workflow_run trigger)
     ▼
-deploy.yml
-  → helm upgrade frontend (new image tag)
-  → helm upgrade api (new image tag)
-  → kubectl rollout status ← fails workflow if pods don't come up
+deploy.yml (CD)
+  → update image tag in helm/*/values.yaml
+  → commit to main ([skip ci])
+    │
+    ▼
+ArgoCD detects the change and syncs the cluster
+  → sync waves: SecretStore → ExternalSecret → migration Job → Deployment
 
 terraform/** PR
     │
     ▼
 terraform-plan.yml
-  → gitleaks (secrets scan)
-  → tflint + tfsec (lint + misconfiguration scan)
-  → infracost (cost delta vs main)
-  → terraform plan → posts result as PR comment
+  → gitleaks, tflint, tfsec, checkov, infracost
+  → terraform plan → posted as a PR comment
 
 terraform/** push to main
     │
     ▼
-terraform-apply.yml
-  → terraform apply -auto-approve
+terraform-apply.yml → terraform apply -auto-approve
+    │ on success (workflow_run trigger)
+    ▼
+build-push.yml (so ECR exists before the first image push) → deploy.yml → ArgoCD
 ```
 
 ### OIDC Authentication
 No static AWS credentials in GitHub. On each run:
 1. GitHub Actions requests a short-lived OIDC token from GitHub
-2. AWS validates it against the `github-actions-terraform` role trust policy (scoped to exact repo + branch)
+2. AWS validates it against the `github-actions-terraform` role trust policy
 3. GHA assumes the role and gets temporary credentials (valid 1 hr max)
 
 ### Image Tagging
 Short 7-char git SHA only (e.g. `9b04499`). No `latest` tag — every deployment is pinned to an exact commit for traceability and easy rollback.
-
----
 
 ## IAM Roles
 
@@ -290,11 +293,11 @@ EKS cluster created by GHA role
 | Issue | Root Cause | Fix Applied |
 |---|---|---|
 | Secrets Manager blocked on re-apply | 30-day recovery window prevents immediate re-creation | `recovery_window_in_days = 0` |
-| State lock migration failure | Switching `dynamodb_table` → `use_lockfile` mid-session caused checksum mismatch | Reverted to `dynamodb_table` |
+| State lock migration failure | Switching `dynamodb_table` → `use_lockfile` mid-session caused checksum mismatch | Migrated cleanly later; the backend now uses native S3 locking (`use_lockfile = true`) |
 | EKS t3.medium blocked | New AWS account vCPU quota | Changed to `t3.small` |
 | kubectl access denied after apply | EKS cluster created by GHA role; local user had no access | `access_config + aws_eks_access_entry` baked in from start |
 | OIDC provider destroyed with full destroy | OIDC + IAM role were in the same state as infra | Moved to `bootstrap/` state — separate, never destroyed |
-| CD workflow skipped on `workflow_dispatch` | `if` condition excluded `workflow_dispatch` event | Deploy manually via `helm upgrade` or add `workflow_dispatch` to trigger |
+| CD workflow skipped on `workflow_dispatch` | `if` condition excluded `workflow_dispatch` event | Added `workflow_dispatch` to the CD trigger and condition |
 | ErrImagePull after cluster recreate | ECR repos recreated by Terraform — old image SHA no longer exists | Trigger CI build to push fresh images with new SHA |
 | Cluster Autoscaler CrashLoopBackOff | IRSA trust policy expected SA `cluster-autoscaler` but Helm chart default is `cluster-autoscaler-aws-cluster-autoscaler` | Set `rbac.serviceAccount.name = "cluster-autoscaler"` in helm_release |
 | Load generator pod Pending | t3.small nodes full (~11 pod limit), monitoring stack consumed all slots | Ran load test from inside existing pod via `kubectl exec` |
@@ -303,12 +306,19 @@ EKS cluster created by GHA role
 | CloudTrail missing `s3_bucket_name` | Required argument omitted; `aws_cloudtrail_event_selector` deprecated in v5 | Added dedicated S3 bucket + policy; moved `event_selector` inline |
 | tflint missed syntax errors | `continue-on-error: true` silently ignored issues; no AWS plugin configured | Created `.tflint.hcl` with AWS ruleset; removed `continue-on-error` from CI |
 | `terraform force-unlock` hung CI | Command waited for interactive confirmation | Added `timeout 60` + `-force` flag + GitHub `timeout-minutes: 2` |
+| Prometheus `helm_release` failed with `context deadline exceeded` | Default Helm wait timeout is 5 min; kube-prometheus-stack is slower on small nodes | `timeout = 900` on the release |
+| CI failed: "repository does not exist" on a fresh stack | CI and Terraform Apply ran in parallel; ECR is created by Terraform | CI also triggers (`workflow_run`) after a successful Terraform Apply |
+| App did not come up after a rebuild | ArgoCD Applications were applied by hand, not by Terraform | `helm_release.argocd_apps` (argocd-apps chart) creates them |
+| External Secrets pod Pending, Helm timed out | t3.small holds ~11 pods; 3 nodes were full and the autoscaler max was 3 | Node group `max_size = 5`; `ignore_changes` on `desired_size` so the autoscaler owns node count |
+| Pods could not reach RDS | Standalone `aws_vpc_security_group_ingress_rule` was stripped by the SG's authoritative inline `ingress` block | One inline rule with both source SGs (`concat([ec2_sg], extra_sgs)`) |
+| Frontend showed "API unreachable" via port-forward | Port-forwarding the frontend pod bypasses ingress; only ingress routes `/api` to the API | Use the load balancer URL (or port-forward `ingress-nginx-controller`) |
+| `terraform destroy` hung on the External Secrets release | An `ExternalSecret` finalizer needs the controller, which Terraform removed first | Clear the finalizer, force-delete the controller pods, re-run destroy (proper fix: destroy ordering) |
 
 ---
 
 ## Cost Notes
 
-- NAT Gateway + RDS + EKS = ~$3–4/day when running
+- Measured burn while running: roughly $0.50/hour (~$12/day) — EKS control plane, 3–4 t3.small nodes, NAT gateway, RDS, load balancer, data transfer
 - OIDC provider + IAM roles = free (permanent, always live in bootstrap state)
 - Cluster destroyed after each session to avoid idle costs
 - Infracost PR check shows cost delta on every terraform PR
