@@ -116,7 +116,7 @@ Charts in `helm/`, deployed by **ArgoCD** (automated sync, prune, self-heal):
 | `helm/frontend` | ClusterIP 80 → pod 8080 | HPA: 2–5 (CPU 70%) | Ingress, PDB |
 | `helm/api` | ClusterIP 3000 | HPA: 2–5 (CPU 70%) | SecretStore + ExternalSecret, migration Job, ServiceMonitor, Grafana dashboard ConfigMap, PDB |
 
-**Sync order (API)** via ArgoCD sync waves: SecretStore (-2) → ExternalSecret (-1) → migration Job (0, Sync hook) → Deployment (1). The Job needs the Secret; the Deployment needs the schema.
+**Sync order (API)** via ArgoCD sync waves: SecretStore (-2) → ExternalSecret (-1) → migration Job (0, Sync hook) → Deployment (1) → HPA (2). The Job needs the Secret, the Deployment needs the schema, and the HPA goes last because an HPA is only Healthy once its target Deployment exists (ArgoCD waits for each wave to be Healthy, so an HPA in an earlier wave deadlocks a fresh install).
 
 **HPA behaviour**: the `replicas` field is omitted from the Deployment when the HPA is enabled, so the HPA owns the replica count and neither `helm upgrade` nor ArgoCD self-heal fights it.
 
@@ -181,7 +181,7 @@ terraform/** push ───► Terraform Apply ─(workflow_run)─► CI ─►
 | `deploy.yml` (CD) | `workflow_run` on CI success, or manual | Updates the image tag in the Helm values and pushes the commit |
 | `terraform-plan.yml` | Pull request touching `terraform/**` | gitleaks, tflint, tfsec, Checkov, Infracost, `terraform plan` posted on the PR |
 | `terraform-apply.yml` | Push to `main` on `terraform/**`, or manual | `terraform apply -auto-approve` (no approval gate yet) |
-| `terraform-destroy.yml` | Manual (`workflow_dispatch`) | Destroys all resources from the Actions UI |
+| `terraform-destroy.yml` | Manual (`workflow_dispatch`) | Destroys all resources from the Actions UI (about 13 minutes); skips Helm-uninstalling in-cluster releases and lets the EKS deletion remove them |
 
 **CI after Apply**: CI also runs when Terraform Apply succeeds, so the ECR repositories exist before the first image push on a fresh stack.
 
@@ -200,9 +200,23 @@ terraform/** push ───► Terraform Apply ─(workflow_run)─► CI ─►
 
 ## Rebuild and teardown
 
-**Rebuild** (about 15–20 minutes): run *Terraform Apply* (merge a change under `terraform/` or use *Run workflow*). Terraform creates the network, EKS, RDS, ECR, ArgoCD and the ArgoCD Applications. CI then builds and pushes the images, CD bumps the tag, and ArgoCD syncs. No manual `kubectl` step is needed.
+### Rebuild (about 18 minutes, no manual steps)
+Run *Terraform Apply* (merge a change under `terraform/` or use *Run workflow*):
+1. Terraform creates the network (VPC, NAT), EKS, RDS, ECR, the app DB secret, External Secrets Operator, Prometheus, ingress-nginx and ArgoCD.
+2. Only after the DB secret exists does Terraform create the ArgoCD Applications (`argocd_apps` depends on `aws_secretsmanager_secret_version.app_db`), so ArgoCD never syncs against a missing secret.
+3. CI runs automatically after a successful Apply (ECR now exists) and pushes the images, then CD bumps the tag in Git.
+4. ArgoCD syncs in order: SecretStore, ExternalSecret, migration Job, Deployment, HPA.
 
-**Teardown**: run the *Terraform Destroy* workflow. Known issue: the External Secrets controller can be removed before the `ExternalSecret` it manages, and the object's finalizer then blocks the uninstall until Helm times out. Workaround: `kubectl patch externalsecret api-api-db -n dev --type=merge -p '{"metadata":{"finalizers":null}}'`, force-delete the pods in `external-secrets`, then re-run the destroy.
+Check it: `aws eks update-kubeconfig --region us-east-1 --name demo-dev-eks`, then `kubectl get applications -n argocd` (both `Synced`/`Healthy`) and `curl -k https://<ingress ELB>/api/ready`.
 
-**Cost**: a running stack burned roughly **$0.50/hour** of credits in practice (EKS control plane, 3–4 t3.small nodes, NAT gateway, RDS, load balancer, plus data transfer). Destroy it after each session.
+### Teardown (about 13 minutes)
+Run the *Terraform Destroy* workflow. By design it does not uninstall the in-cluster Helm releases one by one: a "Remove Kubernetes resources from state" step drops them from Terraform state, and deleting the EKS cluster removes them. `ingress-nginx` is still uninstalled first so its load balancer is deleted before the VPC. Two ordering rules make this reliable:
+- `module "eks"` depends on the whole VPC module, so the **NAT gateway outlives the cluster** (nodes reach the control plane through it; if it disappears first, nodes go `NotReady` and Helm uninstalls hang until timeout).
+- Any new Helm release added to the cluster must also be added to that state-rm list, or its uninstall can hang during teardown.
 
+Verify nothing billable is left (all should return empty): EKS clusters, RDS instances, NAT gateways, load balancers (`elbv2` and classic `elb`), Elastic IPs, EBS volumes, running EC2 instances, non-default VPCs, Secrets Manager secrets, ECR repositories.
+
+If a destroy ever hangs, the manual unstick is to clear the finalizers on the ArgoCD Applications and the `ExternalSecret` (`kubectl patch ... -p '{"metadata":{"finalizers":null}}'`), then re-run the workflow.
+
+### Cost
+A running stack burned roughly **$0.50/hour** of credits in practice (EKS control plane, 3–4 t3.small nodes, NAT gateway, RDS, load balancer, data transfer). A full rebuild-and-teardown test cycle costs about $1–2. Destroy it after each session.
