@@ -133,6 +133,11 @@ module "eks" {
   private_subnet_ids = module.vpc.private_subnet_ids
   admin_iam_arn      = "arn:aws:iam::${var.aws_account_id}:user/${var.admin_iam_name}"
   gha_role_arn       = "arn:aws:iam::${var.aws_account_id}:role/${var.gha_role_name}"
+
+  # Nodes reach the EKS control plane through the NAT gateway and route tables, which the
+  # subnet outputs above do not capture. Depending on the whole VPC module guarantees the
+  # NAT/routes exist before nodes join, and (in reverse) outlive the cluster on destroy.
+  depends_on = [module.vpc]
 }
 
 module "ecr" {
