@@ -391,12 +391,16 @@ resource "helm_release" "argocd_apps" {
   chart      = "argocd-apps"
   namespace  = "argocd"
   version    = "2.0.2"
+  timeout    = 600
 
   values = [yamlencode({
     applications = {
       for app in ["api", "frontend"] : app => {
         namespace = "argocd"
         project   = "default"
+        # Cascade delete: removing the Application also removes what it deployed
+        # (ExternalSecret, ServiceMonitor, Ingress, ...) while their controllers still run.
+        finalizers = ["resources-finalizer.argocd.argoproj.io"]
         source = {
           repoURL        = "https://github.com/karanpulipati-09/aws-microservices-demo"
           targetRevision = "main"
@@ -414,7 +418,15 @@ resource "helm_release" "argocd_apps" {
     }
   })]
 
-  depends_on = [helm_release.argocd]
+  # Destroy order is the reverse: these Applications are removed first, so their
+  # ExternalSecret / ServiceMonitor / Ingress objects are deleted while the External
+  # Secrets controller, Prometheus CRDs and ingress-nginx are still running.
+  depends_on = [
+    helm_release.argocd,
+    helm_release.external_secrets,
+    helm_release.prometheus,
+    helm_release.ingress_nginx,
+  ]
 }
 
 # App DB credentials as one JSON secret — synced into the cluster by External Secrets Operator
