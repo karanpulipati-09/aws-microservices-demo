@@ -51,7 +51,10 @@ jobs:
         continue-on-error: true
 
       - name: Delete Kubernetes resources
-        run: kubectl delete -f k8s/ --ignore-not-found=true
+        # Best effort only: with no nodes or a stuck finalizer a namespace never finishes
+        # deleting, so do not wait. The EKS deletion removes anything left over.
+        timeout-minutes: 5
+        run: timeout 180 kubectl delete -f k8s/ --ignore-not-found=true --wait=false
         continue-on-error: true
 
       - name: Remove Kubernetes resources from state
