@@ -76,9 +76,11 @@ resource "aws_eks_node_group" "main" {
   node_role_arn   = aws_iam_role.eks_nodes.arn
   subnet_ids      = var.private_subnet_ids
 
-  instance_types = ["t3.small"]
+  instance_types = ["t3.medium"]
 
-  # t3.small fits ~11 pods per node (ENI limit), so add-ons fill 3 nodes quickly.
+  # t3.small fits only ~11 pods per node (ENI limit). DaemonSet pods (e.g. node-exporter)
+  # are pinned to one node, so a full node leaves them Pending and the Prometheus helm
+  # release times out; the autoscaler cannot help. t3.medium fits ~17 pods per node.
   scaling_config {
     desired_size = 2
     min_size     = 1
